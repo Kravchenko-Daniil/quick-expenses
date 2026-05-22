@@ -55,7 +55,7 @@ $('f').addEventListener('submit', (e) => {
   flush();
 });
 
-async function tryPost(text) {
+async function tryPost(item) {
   const token = localStorage.getItem(TOKEN_KEY);
   if (!token) return { ok: false, error: 'нет токена' };
 
@@ -63,7 +63,7 @@ async function tryPost(text) {
     const res = await fetch('/api/expense', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ text, now: new Date().toISOString() }),
+      body: JSON.stringify({ text: item.text, now: new Date().toISOString(), client_id: item.client_id }),
     });
     if (res.ok) return { ok: true };
     let detail = '';
@@ -74,13 +74,18 @@ async function tryPost(text) {
   }
 }
 
+function genClientId() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  return `c_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function getQueue() {
   try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]'); } catch { return []; }
 }
 function setQueue(q) { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); }
 function enqueue(text) {
   const q = getQueue();
-  q.push({ text, queuedAt: new Date().toISOString() });
+  q.push({ text, queuedAt: new Date().toISOString(), client_id: genClientId() });
   setQueue(q);
 }
 
@@ -94,7 +99,10 @@ async function flush() {
     let droppedCount = 0;
     while (q.length > 0) {
       const item = q[0];
-      const result = await tryPost(item.text);
+      // Backfill client_id for items queued before this build — keeps idempotency
+      // working on the first post-upgrade flush.
+      if (!item.client_id) { item.client_id = genClientId(); setQueue(q); }
+      const result = await tryPost(item);
       if (result.ok) {
         q.shift();
         setQueue(q);

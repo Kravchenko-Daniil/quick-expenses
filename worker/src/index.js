@@ -231,6 +231,7 @@ async function handleQuickExpense(req, env) {
     amount: parsed.amount,
     note: parsed.description,
     at: body.now,
+    client_id: body.client_id,
   });
 }
 
@@ -265,6 +266,11 @@ function validateEvent(body) {
     const d = new Date(body.at);
     if (isNaN(d.getTime())) return { ok: false, message: 'at is not valid date' };
     if (d.getTime() > Date.now() + 24 * 60 * 60 * 1000) return { ok: false, message: 'at cannot be in the future' };
+  }
+  if (body.client_id !== undefined && body.client_id !== null) {
+    if (typeof body.client_id !== 'string' || body.client_id.length > 64) {
+      return { ok: false, message: 'client_id must be string ≤64 chars' };
+    }
   }
   return { ok: true };
 }
@@ -342,6 +348,8 @@ async function createEvent(env, body) {
   const v = validateEvent(body);
   if (!v.ok) return error(400, v.message);
 
+  const clientId = typeof body.client_id === 'string' && body.client_id ? body.client_id : null;
+
   const event = {
     id: genId(),
     type: body.type,
@@ -352,6 +360,7 @@ async function createEvent(env, body) {
     note: body.note || null,
     at: body.at ? new Date(body.at).toISOString() : new Date().toISOString(),
   };
+  if (clientId) event.client_id = clientId;
 
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
@@ -362,6 +371,14 @@ async function createEvent(env, body) {
       ]);
       if (!balances) return error(500, 'balances.json missing');
       const events = (eventsFile && eventsFile.events) || [];
+
+      // Idempotency: if a recent event has the same client_id, the previous POST
+      // already committed — return it without a second write. Window of 200 covers
+      // any plausible PWA-queue flush burst.
+      if (clientId) {
+        const existing = events.slice(-200).find((e) => e.client_id === clientId);
+        if (existing) return ok({ event: existing, balances, deduped: true });
+      }
 
       const newBalances = applyMutation(deepClone(balances), event);
       newBalances.updated_at = event.at;

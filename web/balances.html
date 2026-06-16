@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#0a0a0a">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Траты дня">
-  <title>Траты дня</title>
+  <meta name="apple-mobile-web-app-title" content="Балансы">
+  <title>Балансы</title>
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icon.svg">
   <link rel="icon" type="image/svg+xml" href="icon.svg">
@@ -18,7 +18,7 @@
       background: #0a0a0a;
       color: #f0f0f0;
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
-      font-size: 17px;
+      font-size: 18px;
       display: flex;
       flex-direction: column;
       padding: max(env(safe-area-inset-top), 1rem) 1rem max(env(safe-area-inset-bottom), 1rem);
@@ -27,13 +27,13 @@
       flex: 1;
       display: flex;
       flex-direction: column;
-      gap: 1rem;
+      gap: 1.25rem;
       max-width: 480px;
       margin: 0 auto;
       width: 100%;
       padding-top: 2.5rem;
     }
-    h1 { font-size: 0.95rem; font-weight: 500; opacity: 0.5; text-align: center; letter-spacing: 0.04em; text-transform: uppercase; }
+    h1 { font-size: 1rem; font-weight: 500; opacity: 0.5; text-align: center; letter-spacing: 0.04em; text-transform: uppercase; }
     .topnav {
       position: fixed; top: max(env(safe-area-inset-top), 0.5rem); left: 0.5rem;
       display: flex; gap: 0; z-index: 10;
@@ -49,82 +49,36 @@
     .topbtn:active, #gear:active { transform: scale(0.92); }
     .topbtn svg, #gear svg { width: 22px; height: 22px; }
     #gear { position: fixed; top: max(env(safe-area-inset-top), 0.5rem); right: 0.5rem; z-index: 10; }
-
-    .day-nav {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 0.5rem;
-    }
-    .day-nav button {
-      width: 44px;
-      height: 44px;
-      background: transparent;
-      color: #f0f0f0;
-      opacity: 0.65;
-      border: 0;
-      border-radius: 12px;
-      cursor: pointer;
-      font-family: inherit;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .day-nav button:active:not(:disabled) { transform: scale(0.92); background: #141414; }
-    .day-nav button:disabled { opacity: 0.18; cursor: not-allowed; }
-    .day-nav button svg { width: 22px; height: 22px; }
-    .day-nav .label {
-      flex: 1;
-      text-align: center;
-      font-size: 1.05rem;
-      font-weight: 500;
-    }
-    .day-nav .label.today { color: #0abab5; }
-
-    .list {
-      display: flex;
-      flex-direction: column;
-      background: #141414;
-      border: 1px solid #1f1f1f;
-      border-radius: 14px;
-      overflow: hidden;
-    }
+    #accounts { display: flex; flex-direction: column; gap: 0.6rem; }
     .row {
       display: flex;
       justify-content: space-between;
       align-items: baseline;
-      padding: 0.85rem 1rem;
-      gap: 0.5rem;
-      border-bottom: 1px solid #1f1f1f;
+      padding: 1rem 1.1rem;
+      background: #141414;
+      border: 1px solid #1f1f1f;
+      border-radius: 14px;
     }
-    .row:last-child { border-bottom: 0; }
-    .row .desc { font-size: 0.95rem; opacity: 0.85; word-break: break-word; }
-    .row .amt { font-size: 1rem; font-weight: 600; font-variant-numeric: tabular-nums; opacity: 0.95; flex-shrink: 0; }
-    .row.total { background: #0abab510; border-top: 1px solid #0abab533; padding: 1rem; }
-    .row.total .desc { font-weight: 600; opacity: 1; font-size: 1rem; }
-    .row.total .amt { font-size: 1.2rem; color: #0abab5; }
-    .tag {
-      display: inline-block;
-      margin-left: 0.4rem;
-      padding: 0.05rem 0.4rem;
-      font-size: 0.65rem;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      background: #0abab522;
-      color: #0abab5;
-      border-radius: 6px;
-      font-weight: 500;
-      vertical-align: middle;
+    /* Everyday (primary) account — first in the list, accented with the Tiffany
+       teal so it clearly reads as the main one. */
+    .row.primary {
+      border: 1.5px solid #0abab5;
+      background: linear-gradient(180deg, #0f1f1e 0%, #0c1716 100%);
+      box-shadow: 0 0 0 1px #0abab5, 0 0 18px -4px rgba(10,186,181,0.55);
+      padding: 1.15rem 1.1rem;
     }
-    .empty {
-      padding: 2.5rem 1rem;
-      text-align: center;
-      opacity: 0.4;
-      font-size: 0.95rem;
-    }
-    #status { min-height: 1.4rem; text-align: center; font-size: 0.9rem; opacity: 0.85; }
+    .row.primary .name { opacity: 1; font-weight: 700; color: #0abab5; }
+    .row.primary .amount { font-size: 1.45rem; }
+    .row.primary .currency { opacity: 0.7; }
+    .row .name { font-size: 1rem; opacity: 0.8; }
+    .row .amount { font-size: 1.25rem; font-weight: 600; font-variant-numeric: tabular-nums; display: inline-flex; align-items: baseline; }
+    .row .amount .num { text-align: right; }
+    /* Fixed-width currency box keeps the number's right edge constant across rows,
+       so every amount lines up in one vertical column regardless of currency width. */
+    .row .currency { font-size: 0.85rem; opacity: 0.5; margin-left: 0.4rem; font-weight: 400; display: inline-block; width: 2.6rem; text-align: left; }
+    #status { min-height: 1.5rem; text-align: center; font-size: 0.9rem; opacity: 0.85; line-height: 1.4; }
     #status.err { color: #e87171; }
-
+    #updated { font-size: 0.78rem; opacity: 0.4; text-align: center; }
     #overlay {
       position: fixed;
       inset: 0;
@@ -178,10 +132,10 @@
     <a href="events.html" class="topbtn" aria-label="События">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="20" x2="7" y2="4"/><polyline points="3 8 7 4 11 8"/><line x1="17" y1="4" x2="17" y2="20"/><polyline points="13 16 17 20 21 16"/></svg>
     </a>
-    <a href="balances.html" class="topbtn" aria-label="Балансы">
+    <a href="balances.html" class="topbtn active" aria-label="Балансы">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>
     </a>
-    <a href="expenses.html" class="topbtn active" aria-label="За день">
+    <a href="expenses.html" class="topbtn" aria-label="За день">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
     </a>
   </nav>
@@ -192,23 +146,11 @@
     </svg>
   </button>
   <main>
-    <h1>Траты за день</h1>
-
-    <div class="day-nav">
-      <button type="button" id="prev" aria-label="Предыдущий день">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
-      </button>
-      <span class="label" id="date-label">…</span>
-      <button type="button" id="next" aria-label="Следующий день">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
-      </button>
-    </div>
-
-    <div id="content"></div>
-
+    <h1>Балансы</h1>
+    <div id="accounts"></div>
     <div id="status"></div>
+    <div id="updated"></div>
   </main>
-
   <div id="overlay">
     <div id="panel">
       <div id="panel-head">
@@ -216,10 +158,12 @@
         <button type="button" id="close" aria-label="Закрыть">×</button>
       </div>
       <input id="token" type="password" placeholder="Bearer token" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <label for="tz-select" style="display:block;margin:14px 0 6px;font-size:14px;opacity:0.7">Часовой пояс</label>
+      <select id="tz-select" style="width:100%;padding:10px;border-radius:8px;font-size:15px;box-sizing:border-box"></select>
       <button type="button" class="action" id="save-config">Сохранить</button>
     </div>
   </div>
-
-  <script src="expenses.js"></script>
+  <script src="config.js"></script>
+  <script src="balances.js"></script>
 </body>
 </html>

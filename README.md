@@ -31,12 +31,10 @@ Same-origin: the PWA fetches relative paths `/api/...` — no CORS, and the user
 
 | Folder | What |
 |---|---|
-| `worker/` | Cloudflare Worker (single-file vanilla JS). Endpoints `POST /api/expense`, `GET /api/balances`, `GET /api/day`, `POST /api/event`, `DELETE /api/event/last`. Talks to Google Sheets. |
-| `pwa/` | PWA: vanilla HTML/CSS/JS + Service Worker. Four pages: record expense, view balances, structured events, daily log. No build step. |
+| `api/` | Cloudflare Worker (single-file vanilla JS). Endpoints `POST /api/expense`, `GET /api/balances`, `GET /api/day`, `POST /api/event`, `DELETE /api/event/last`. Talks to Google Sheets. |
+| `web/` | PWA: vanilla HTML/CSS/JS + Service Worker. Four pages: record expense, view balances, structured events, daily log. No build step. |
 | `scripts/` | `migrate-to-sheets.mjs` — one-off importer from the older JSON/markdown storage into the spreadsheet. Dependency-free Node. |
-| `sync/`, `hooks/` | **Legacy** (from when the store was a GitHub repo): cron pull + Claude Code SessionStart hook to keep a local clone fresh. Not needed with the Sheets backend; kept for reference. |
-| `docs/` | Changelog. |
-| `DEPLOY.md` | Full setup guide. |
+| `docs/` | Changelog + the full setup guide (`deploy.md`). |
 
 ---
 
@@ -77,14 +75,14 @@ Reconciliation, categorization, currency conversion, charting — all of that is
 
 ## Setup
 
-See **[DEPLOY.md](./DEPLOY.md)**. ~30–45 minutes:
+See **[docs/deploy.md](./docs/deploy.md)**. ~30–45 minutes:
 
 1. A Google Cloud **service account** + its JSON key, with the Sheets API enabled
 2. Create a spreadsheet with two tabs (`Events`, `Balances`) and **share it with the service-account email** (Editor)
-3. Random `APP_TOKEN` for Bearer auth
-4. `cp worker/wrangler.example.toml worker/wrangler.toml`, fill in your domain / spreadsheet id / account ids
-5. `wrangler secret put GOOGLE_SA_JSON` and `APP_TOKEN`, then `npx wrangler deploy` for the Worker
-6. `npx wrangler pages deploy pwa --project-name=...` for the PWA, attach the same custom domain
+3. Random `FINANCE_WORKER_API_TOKEN` for Bearer auth
+4. `cp api/wrangler.example.toml api/wrangler.toml`, fill in your domain / spreadsheet id / account ids
+5. `wrangler secret put GOOGLE_SA_JSON` and `FINANCE_WORKER_API_TOKEN`, then `npx wrangler deploy` for the Worker
+6. `npx wrangler pages deploy web --project-name=...` for the PWA, attach the same custom domain
 7. Open `https://<your-domain>/`, paste the Bearer token in Settings, done
 
 ---

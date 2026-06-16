@@ -19,14 +19,9 @@ const MONTHS_GEN = ['января', 'февраля', 'марта', 'апрел�
 
 const pad2 = (n) => String(n).padStart(2, '0');
 
-function todayInBangkok() {
-  const fmt = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Bangkok',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-  });
-  const parts = Object.fromEntries(fmt.formatToParts(new Date()).map((p) => [p.type, p.value]));
-  return `${parts.year}-${parts.month}-${parts.day}`;
-}
+// "Today" comes from AppConfig (config.js) — the active zone is the single source
+// of truth (server KV, GET/PUT /api/config), kept in sync via cacheFrom() below.
+const todayLocal = () => AppConfig.today();
 
 function addDays(dateStr, n) {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -49,7 +44,7 @@ function fmtAmount(n) {
   return decPart !== undefined ? `${intFmt}.${decPart}` : intFmt;
 }
 
-const CURRENCY_DISPLAY = { THB: '฿', USDT: 'USDT', RUB: '₽' };
+const CURRENCY_DISPLAY = { THB: '฿', USDT: 'USDT', RUB: '₽', VND: '₫' };
 function curSymbol(c) { return CURRENCY_DISPLAY[c] || c || ''; }
 
 function escapeHtml(s) {
@@ -57,7 +52,7 @@ function escapeHtml(s) {
 }
 
 const state = {
-  date: todayInBangkok(),
+  date: todayLocal(),
   loading: false,
 };
 
@@ -70,7 +65,7 @@ function setStatus(text, cls = '') {
 function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
 
 function renderHeader() {
-  const today = todayInBangkok();
+  const today = todayLocal();
   const label = $('date-label');
   label.textContent = state.date === today ? `Сегодня · ${fmtDate(state.date)}` : fmtDate(state.date);
   label.classList.toggle('today', state.date === today);
@@ -146,6 +141,8 @@ async function load() {
       return;
     }
     const data = await res.json();
+    AppConfig.cacheFrom(data); // keep the local zone in sync with the server
+    renderHeader();
     writeCache(fetchDate, data);
     renderContent(data);
     setStatus('');
@@ -161,7 +158,7 @@ function prev() {
   load();
 }
 function next() {
-  if (state.date >= todayInBangkok()) return;
+  if (state.date >= todayLocal()) return;
   state.date = addDays(state.date, 1);
   load();
 }
@@ -175,13 +172,16 @@ document.addEventListener('keydown', (e) => {
 
 const overlay = $('overlay');
 $('token').value = localStorage.getItem(TOKEN_KEY) || '';
-$('gear').addEventListener('click', () => overlay.classList.add('open'));
+AppConfig.populateSelect($('tz-select'));
+$('gear').addEventListener('click', () => { AppConfig.populateSelect($('tz-select')); overlay.classList.add('open'); });
 $('close').addEventListener('click', () => overlay.classList.remove('open'));
 overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('open'); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') overlay.classList.remove('open'); });
-$('save-config').addEventListener('click', () => {
+$('save-config').addEventListener('click', async () => {
   localStorage.setItem(TOKEN_KEY, $('token').value.trim());
+  await AppConfig.saveTimezone($('tz-select').value);
   overlay.classList.remove('open');
+  if (state.date > todayLocal()) state.date = todayLocal();
   load();
 });
 

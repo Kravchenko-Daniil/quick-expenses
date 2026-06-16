@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Post-migration verification. Re-implements the Worker's read logic (must match
-// worker/src/index.js) and runs it against the live sheet, then checks integrity:
+// api/src/index.js) and runs it against the live sheet, then checks integrity:
 //   - Balances header scans, accounts parse, dataStartRow is right
 //   - every Events row parses; every from/to references a real account
 //   - no orphaned old ids (card_t / card_vtb) remain

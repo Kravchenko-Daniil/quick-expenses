@@ -15,10 +15,10 @@ Step-by-step guide to spin up this project on a fresh Cloudflare account with a 
    │ <your-domain>  (single domain)                        │
    ├───────────────────────────────────────────────────────┤
    │ /, /balances, /events, /expenses, /icon.svg, ...      │
-   │   → Cloudflare Pages (PWA static assets from pwa/)    │
+   │   → Cloudflare Pages (PWA static assets from web/)    │
    │                                                       │
    │ /api/*                                                │
-   │   → Cloudflare Worker (worker/src/index.js)           │
+   │   → Cloudflare Worker (api/src/index.js)              │
    │     └─ Google Sheets API → your spreadsheet           │
    │          ├── Events   (append-only log)               │
    │          └── Balances (per-account balances)          │
@@ -54,7 +54,7 @@ PWA and Worker share a single domain (same-origin). The PWA fetches relative pat
 
 ---
 
-## Step 2. APP_TOKEN (Bearer for PWA → Worker)
+## Step 2. FINANCE_WORKER_API_TOKEN (Bearer for PWA → Worker)
 
 ```bash
 openssl rand -base64 32
@@ -67,7 +67,7 @@ Save it — it goes into Worker secrets AND the PWA's localStorage.
 ## Step 3. Configure & deploy Worker
 
 ```bash
-cd worker
+cd api
 cp wrangler.example.toml wrangler.toml
 ```
 
@@ -82,7 +82,7 @@ Then:
 ```bash
 npx wrangler@latest login                       # auth Cloudflare
 npx wrangler@latest secret put GOOGLE_SA_JSON   # paste the FULL service-account JSON from Step 1
-npx wrangler@latest secret put APP_TOKEN        # paste token from Step 2
+npx wrangler@latest secret put FINANCE_WORKER_API_TOKEN        # paste token from Step 2
 npx wrangler@latest deploy
 ```
 
@@ -98,13 +98,13 @@ SOURCE_DIR=/path/to/old-data DRY_RUN=1 node scripts/migrate-to-sheets.mjs   # pr
 SOURCE_DIR=/path/to/old-data node scripts/migrate-to-sheets.mjs             # clears + rewrites both tabs
 ```
 
-The script reads the service-account key from `worker/google-service-account.json` (override with `SA_KEY=`) and the spreadsheet id from `worker/wrangler.toml` (override with `SPREADSHEET_ID=`). It's re-runnable.
+The script reads the service-account key from `api/google-service-account.json` (override with `SA_KEY=`) and the spreadsheet id from `api/wrangler.toml` (override with `SPREADSHEET_ID=`). It's re-runnable.
 
 ### Smoke-test the Worker
 
 ```bash
 DOMAIN="your-domain.example.com"
-TOKEN="<your APP_TOKEN>"
+TOKEN="<your FINANCE_WORKER_API_TOKEN>"
 
 # GET balances
 curl "https://$DOMAIN/api/balances" -H "Authorization: Bearer $TOKEN"
@@ -142,10 +142,10 @@ All `POST`s return `{ok:true, event:{...}, balances:{...}}`. The event is append
 
 ```bash
 cd ..   # back to project root
-npx wrangler@latest pages deploy pwa --project-name=<your-pwa-project-name>
+npx wrangler@latest pages deploy web --project-name=<your-pwa-project-name>
 ```
 
-**Important:** run from the project root, not from `pwa/`. Wrangler otherwise misses assets.
+**Important:** run from the project root, not from `web/`. Wrangler otherwise misses assets.
 
 Wrangler prints a `<hash>.<project>.pages.dev` URL. Attach your custom domain to the Pages project in Cloudflare Dashboard → Workers & Pages → your Pages project → Custom domains → Set up a custom domain → enter `<your-domain>`.
 
@@ -155,7 +155,7 @@ Wrangler prints a `<hash>.<project>.pages.dev` URL. Attach your custom domain to
 
 Open `https://<your-domain>/` in a browser. On first load the **Settings** panel pops up with a single field:
 
-- **Bearer token** — paste the `APP_TOKEN` from Step 2 → Save.
+- **Bearer token** — paste the `FINANCE_WORKER_API_TOKEN` from Step 2 → Save.
 
 That's it — no "Worker URL" field, the PWA fetches `/api/...` on the same origin.
 
@@ -172,12 +172,6 @@ That's it — no "Worker URL" field, the PWA fetches `/api/...` on the same orig
 
 ---
 
-## Step 6. (Legacy) Local clone / cron sync
-
-The `sync/` and `hooks/` scripts date from when the store was a GitHub repo (cron `git pull` of the data repo, plus a Claude Code SessionStart hook). **With the Google Sheets backend they're unnecessary** — the spreadsheet is the live store and you read it directly. They're kept in the repo for reference only; skip this step for a Sheets deployment.
-
----
-
 ## End-to-end checklist
 
 - [ ] Spreadsheet shared with the service-account email as Editor
@@ -191,9 +185,9 @@ The `sync/` and `hooks/` scripts date from when the store was a GitHub repo (cro
 
 ## Troubleshooting
 
-**Worker returns 401 Unauthorized.** `APP_TOKEN` in the Worker secret doesn't match what's in PWA `localStorage`. Re-paste in Settings, or `wrangler secret put APP_TOKEN`.
+**Worker returns 401 Unauthorized.** `FINANCE_WORKER_API_TOKEN` in the Worker secret doesn't match what's in PWA `localStorage`. Re-paste in Settings, or `wrangler secret put FINANCE_WORKER_API_TOKEN`.
 
-**Worker returns 404 on `/api/...`.** The Workers Route isn't configured, or the Worker isn't deployed to the right zone. Cloudflare Dashboard → Workers → your Worker → Settings → Domains & Routes — should show `Route: <your-domain>/api/*`. If absent, `cd worker && wrangler deploy`.
+**Worker returns 404 on `/api/...`.** The Workers Route isn't configured, or the Worker isn't deployed to the right zone. Cloudflare Dashboard → Workers → your Worker → Settings → Domains & Routes — should show `Route: <your-domain>/api/*`. If absent, `cd api && wrangler deploy`.
 
 **Pages returns HTML on `/api/balances` instead of JSON.** The Workers Route isn't matching, or hit Pages first. Workers Routes have priority over Pages by design — verify the pattern is exactly `<your-domain>/api/*` (not `/api*` or `api.<your-domain>/*`), and the zone is correct.
 
@@ -203,7 +197,7 @@ The `sync/` and `hooks/` scripts date from when the store was a GitHub repo (cro
 
 **Worker 502 `sheets: token exchange ...`.** `GOOGLE_SA_JSON` is malformed, truncated, or the key was revoked. Re-paste the full JSON: `wrangler secret put GOOGLE_SA_JSON`.
 
-**PWA didn't update after deploy.** Service Worker is caching. Close-reopen PWA, or DevTools → Application → Clear storage. Cache version is the `CACHE` constant in `pwa/sw.js` — bump it on significant changes.
+**PWA didn't update after deploy.** Service Worker is caching. Close-reopen PWA, or DevTools → Application → Clear storage. Cache version is the `CACHE` constant in `web/sw.js` — bump it on significant changes.
 
 **PWA won't install on iPhone.** Safari needs HTTPS (Pages provides it) and a `manifest.json` (present). If "Add to Home Screen" doesn't appear — update Safari, open in actual Safari (not an in-app browser).
 
@@ -220,12 +214,12 @@ The `sync/` and `hooks/` scripts date from when the store was a GitHub repo (cro
 
 ---
 
-## What's in `worker/test-smoke.mjs`
+## What's in `api/test-smoke.mjs`
 
 Unit tests for pure logic (no fetch / no Sheets calls): `parseExpense`, `bangkokContext` / `bangkokDateOf`, the `rowToEvent`↔`eventToRow` round-trip, `validateEvent`, and `applyMutation` / `reverseMutation`. Run with:
 
 ```bash
-cd worker && node test-smoke.mjs
+cd api && node test-smoke.mjs
 ```
 
 The functions are inline copies of the pure logic in `src/index.js` — keep them in sync when the source changes.

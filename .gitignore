@@ -1,8 +1,6 @@
 # Local config — contains personal values (domain, repo name, account ids, paths)
 # Each has a corresponding *.example.* template that IS committed.
-worker/wrangler.toml
-sync/pull.sh
-hooks/session-start.sh
+api/wrangler.toml
 
 # Personal Claude Code context — instructions specific to this user's setup.
 CLAUDE.md
@@ -11,7 +9,7 @@ CLAUDE.md
 .env
 .dev.vars
 .wrangler/
-worker/google-service-account.json
+api/google-service-account.json
 
 # BMAD-method installation artifacts (not part of the runtime)
 _bmad/
@@ -29,3 +27,10 @@ Thumbs.db
 
 # Sheet backups (operator scripts) — never commit financial data
 scripts/_backups/
+
+# Backstage: personal design notes + work-in-progress handoffs (real balances,
+# debts, account ids) — never commit. The whole dev/ tree is local-only.
+dev/
+
+# Contains BIDV statement password hardcoded — never commit as-is
+scripts/import-bidv.py

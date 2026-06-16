@@ -20,13 +20,15 @@ const overlay = $('overlay');
 const openSettings = () => overlay.classList.add('open');
 const closeSettings = () => overlay.classList.remove('open');
 
-$('gear').addEventListener('click', openSettings);
+AppConfig.populateSelect($('tz-select'));
+$('gear').addEventListener('click', () => { AppConfig.populateSelect($('tz-select')); openSettings(); });
 $('close').addEventListener('click', closeSettings);
 overlay.addEventListener('click', (e) => { if (e.target === overlay) closeSettings(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSettings(); });
 
-$('save-config').addEventListener('click', () => {
+$('save-config').addEventListener('click', async () => {
   localStorage.setItem(TOKEN_KEY, tokenInput.value.trim());
+  await AppConfig.saveTimezone($('tz-select').value);
   setStatus('Настройки сохранены', 'ok');
   closeSettings();
   flush();
@@ -63,7 +65,11 @@ async function tryPost(item) {
     const res = await fetch('/api/expense', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ text: item.text, now: new Date().toISOString(), client_id: item.client_id }),
+      // Send the capture time (queuedAt), not the flush time — a delayed flush
+      // (offline / missing token / 5xx) must still date the expense to when it
+      // was typed, otherwise old queued items resurface on the day they finally
+      // send. Fall back to now for items queued before this field existed.
+      body: JSON.stringify({ text: item.text, now: item.queuedAt || new Date().toISOString(), client_id: item.client_id }),
     });
     if (res.ok) return { ok: true };
     let detail = '';

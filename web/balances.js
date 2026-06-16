@@ -14,7 +14,7 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
-const CURRENCY_DISPLAY = { THB: 'бат', USDT: 'USDT', RUB: '₽' };
+const CURRENCY_DISPLAY = { THB: 'бат', USDT: 'USDT', RUB: '₽', VND: '₫' };
 
 function fmtAmount(n) {
   const isInt = Math.abs(n % 1) < 0.005;
@@ -29,7 +29,7 @@ function fmtUpdatedAt(iso) {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
   const fmt = new Intl.DateTimeFormat('ru-RU', {
-    timeZone: 'Asia/Bangkok',
+    timeZone: AppConfig.tz(),
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
@@ -45,17 +45,23 @@ function setStatus(text, cls = '') {
 function render(data) {
   const list = $('accounts');
   list.innerHTML = '';
-  const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+  let accounts = Array.isArray(data.accounts) ? data.accounts.slice() : [];
+  // Everyday account (env.PRIMARY_ACCOUNT) floats to the top, highlighted.
+  const primary = data.primary || null;
+  if (primary) {
+    accounts.sort((a, b) => (a.id === primary ? -1 : 0) - (b.id === primary ? -1 : 0));
+  }
   if (accounts.length === 0) {
     list.innerHTML = '<div class="row"><span class="name" style="opacity:0.5">пусто</span></div>';
   } else {
     for (const acc of accounts) {
       const row = document.createElement('div');
       row.className = 'row';
+      if (primary && acc.id === primary) row.classList.add('primary');
       const cur = CURRENCY_DISPLAY[acc.currency] || acc.currency || '';
       row.innerHTML = `
         <span class="name">${escapeHtml(acc.name || acc.id || '?')}</span>
-        <span class="amount">${fmtAmount(acc.amount || 0)}<span class="currency">${escapeHtml(cur)}</span></span>
+        <span class="amount"><span class="num">${fmtAmount(acc.amount || 0)}</span><span class="currency">${escapeHtml(cur)}</span></span>
       `;
       list.appendChild(row);
     }
@@ -97,6 +103,7 @@ async function load() {
       return;
     }
     const data = await res.json();
+    AppConfig.cacheFrom(data); // keep the local zone in sync with the server
     writeCache(data);
     render(data);
   } catch {
@@ -107,14 +114,16 @@ async function load() {
 const overlay = $('overlay');
 const tokenInput = $('token');
 tokenInput.value = localStorage.getItem(TOKEN_KEY) || '';
+AppConfig.populateSelect($('tz-select'));
 
-$('gear').addEventListener('click', () => overlay.classList.add('open'));
+$('gear').addEventListener('click', () => { AppConfig.populateSelect($('tz-select')); overlay.classList.add('open'); });
 $('close').addEventListener('click', () => overlay.classList.remove('open'));
 overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('open'); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') overlay.classList.remove('open'); });
 
-$('save-config').addEventListener('click', () => {
+$('save-config').addEventListener('click', async () => {
   localStorage.setItem(TOKEN_KEY, tokenInput.value.trim());
+  await AppConfig.saveTimezone($('tz-select').value);
   overlay.classList.remove('open');
   load();
 });

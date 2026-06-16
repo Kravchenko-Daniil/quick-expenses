@@ -5,15 +5,22 @@
 // Config comes through env (see wrangler.toml):
 //   SPREADSHEET_ID        — the target spreadsheet id
 //   GOOGLE_SA_JSON        — full service-account JSON (secret)
-//   APP_TOKEN             — bearer token the PWA sends (secret)
+//   FINANCE_WORKER_API_TOKEN — bearer token the PWA sends (secret)
 //   DEFAULT_ACCOUNT_*     — account id quick-expense routes to per currency
 //
 // No personal values live in code — this is a public template.
 //
+// Display timezone is a single configurable value, not a hardcoded zone. It lives
+// in KV (binding CONFIG, key `timezone`), is read via readTimezone(), and falls
+// back to env.TIMEZONE then 'Asia/Bangkok'. The site reads/writes it through
+// GET/PUT /api/config, so one change propagates everywhere (no redeploy). Storage
+// stays zone-agnostic: `at` is an absolute UTC instant; the zone is applied only
+// when bucketing days (getDay) or formatting the human `when` column.
+//
 // === Sheet schema ===
 // Events  (row 1 = headers): A:when  B:type  C:from  D:to  E:amount  F:amount_to  G:note  H:id  I:at  J:client_id
-//   `when` is a display-only column (a short Bangkok date, derived from `at`); it
-//   is written on append and ignored on read. `at` (ISO) stays the source of truth.
+//   `when` is a display-only column (a short date in the configured timezone,
+//   derived from `at`); written on append, ignored on read. `at` (ISO) is truth.
 // Balances: F1 = updated_at ISO (raw, hidden). An "Updated" line sits up top; the
 //   accounts table is found by scanning column A for the "id" header and read
 //   until the first blank row (a totals block sits below that blank, ignored).
@@ -30,6 +37,7 @@ const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
 const EVENTS_SHEET = 'Events';
 const BALANCES_SHEET = 'Balances';
+const SETTINGS_SHEET = 'Settings';
 // Column order the Worker reads/writes for the Events sheet. `when` is a
 // display-only derived column (see formatWhen); every other key maps 1:1 to the
 // event object.
@@ -38,18 +46,31 @@ const EVENT_COLS = ['when', 'type', 'from', 'to', 'amount', 'amount_to', 'note',
 export default {
   async fetch(req, env) {
     const auth = req.headers.get('Authorization') || '';
-    if (!env.APP_TOKEN || auth !== `Bearer ${env.APP_TOKEN}`) {
+    if (!env.FINANCE_WORKER_API_TOKEN || auth !== `Bearer ${env.FINANCE_WORKER_API_TOKEN}`) {
       return error(401, 'unauthorized');
     }
 
     const url = new URL(req.url);
 
     try {
+      if (req.method === 'GET' && url.pathname === '/api/config') return await getConfig(env);
+      if (req.method === 'PUT' && url.pathname === '/api/config') return await putConfig(req, env);
       if (req.method === 'GET' && url.pathname === '/api/balances') return await getBalances(env);
       if (req.method === 'GET' && url.pathname === '/api/day') return await getDay(req, env);
+      if (req.method === 'GET' && url.pathname === '/api/events') return await getEvents(req, env);
       if (req.method === 'POST' && url.pathname === '/api/event') return await handleEvent(req, env);
       if (req.method === 'DELETE' && url.pathname === '/api/event/last') return await handleEventDelete(env);
       if (req.method === 'POST' && url.pathname === '/api/expense') return await handleQuickExpense(req, env);
+      if (req.method === 'POST' && url.pathname === '/api/snapshot') return await handleSnapshot(req, env);
+      // Edit/delete an arbitrary event by id — the reconciliation path Claude Code
+      // (and any operator) uses instead of touching Sheets directly. `/api/event/last`
+      // is matched above; any other suffix is taken as an event id.
+      const idMatch = url.pathname.match(/^\/api\/event\/([^/]+)$/);
+      if (idMatch) {
+        const id = decodeURIComponent(idMatch[1]);
+        if (req.method === 'PATCH') return await patchEventById(req, env, id);
+        if (req.method === 'DELETE') return await deleteEventById(env, id);
+      }
     } catch (e) {
       return error(502, `sheets: ${e.message}`);
     }
@@ -75,14 +96,29 @@ function error(status, message) {
 const pad = (n) => String(n).padStart(2, '0');
 
 // Currency tokens recognized in quick-expense text. Stripped from description,
-// used to route to a default account (via env.DEFAULT_ACCOUNT_USDT / _RUB / _THB).
+// used to route to a default account (via env.DEFAULT_ACCOUNT_USDT / _RUB / _THB / _VND).
 // Unicode-aware word boundaries: JS \b is ASCII-only, so "руб" wouldn't match
 // at cyrillic boundaries. Lookbehind/ahead on letter/number guard against
-// false positives like "рубероид" / "рубашку".
-const CURRENCY_TOKEN_RE = /(?<![\p{L}\p{N}_])(usdt|rub|руб)(?![\p{L}\p{N}_])/giu;
+// false positives like "рубероид" / "рубашку". Tokens match the bare stem only
+// (e.g. "руб" matches "руб" but not "рублей", "донг" not "донгов") — same dumb
+// contract as the amount parser.
+const CURRENCY_TOKEN_RE = /(?<![\p{L}\p{N}_])(usdt|rub|руб|thb|бат|baht|vnd|донг)(?![\p{L}\p{N}_])/giu;
+
+// Token stem (lowercased) → currency code.
+const TOKEN_CURRENCY = {
+  usdt: 'USDT',
+  rub: 'RUB', руб: 'RUB',
+  thb: 'THB', бат: 'THB', baht: 'THB',
+  vnd: 'VND', донг: 'VND',
+};
 
 function defaultAccountByCurrency(env) {
-  return { USDT: env.DEFAULT_ACCOUNT_USDT, RUB: env.DEFAULT_ACCOUNT_RUB, THB: env.DEFAULT_ACCOUNT_THB };
+  return {
+    USDT: env.DEFAULT_ACCOUNT_USDT,
+    RUB: env.DEFAULT_ACCOUNT_RUB,
+    THB: env.DEFAULT_ACCOUNT_THB,
+    VND: env.DEFAULT_ACCOUNT_VND,
+  };
 }
 
 function parseExpense(input) {
@@ -93,7 +129,7 @@ function parseExpense(input) {
   const tokens = [...text.matchAll(CURRENCY_TOKEN_RE)];
   if (tokens.length === 1) {
     const tok = tokens[0][1].toLowerCase();
-    currency = tok === 'usdt' ? 'USDT' : 'RUB';
+    currency = TOKEN_CURRENCY[tok] || null;
     text = text.replace(CURRENCY_TOKEN_RE, ' ').replace(/\s+/g, ' ').trim();
   }
 
@@ -110,16 +146,19 @@ function parseExpense(input) {
   return { description, amount, currency };
 }
 
-function bangkokContext(nowISO) {
+// "Today" (and weekday/section header) in the given zone. `dateParam` builds the
+// same shape from a literal YYYY-MM-DD (weekday of a calendar date is zone-free).
+function zoneContext(nowISO, tz) {
   const now = nowISO ? new Date(nowISO) : new Date();
   const fmt = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Bangkok',
+    timeZone: tz,
     year: 'numeric', month: '2-digit', day: '2-digit',
   });
   const parts = Object.fromEntries(fmt.formatToParts(now).map((p) => [p.type, p.value]));
-  const year = parseInt(parts.year, 10);
-  const month = parseInt(parts.month, 10);
-  const day = parseInt(parts.day, 10);
+  return contextFromYMD(parseInt(parts.year, 10), parseInt(parts.month, 10), parseInt(parts.day, 10));
+}
+
+function contextFromYMD(year, month, day) {
   const dt = new Date(Date.UTC(year, month - 1, day));
   const weekdayRu = WEEKDAYS_RU[dt.getUTCDay()];
   const monthEn = MONTHS_EN[month - 1];
@@ -129,24 +168,24 @@ function bangkokContext(nowISO) {
   };
 }
 
-function bangkokDateOf(iso) {
+function dateInZone(iso, tz) {
   const fmt = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Bangkok',
+    timeZone: tz,
     year: 'numeric', month: '2-digit', day: '2-digit',
   });
   const parts = Object.fromEntries(fmt.formatToParts(new Date(iso)).map((p) => [p.type, p.value]));
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
-// Display string for the Events `when` column: a short Bangkok date. Noon-exact
+// Display string for the Events `when` column: a short date in `tz`. Noon-exact
 // (12:00:00) is the backdate placeholder — no real time-of-day — so it shows the
 // date only; any other time shows `DD.MM.YYYY HH:MM`. Derived from `at` on write.
-function formatWhen(iso) {
+function formatWhen(iso, tz) {
   if (!iso) return '';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '';
   const fmt = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Bangkok',
+    timeZone: tz,
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
   });
@@ -156,40 +195,95 @@ function formatWhen(iso) {
   return `${date} ${p.hour}:${p.minute}`;
 }
 
+// === CONFIG (display timezone, single source of truth in KV) ===
+
+// Brief in-isolate cache. The zone changes rarely; a 30s TTL keeps getDay/createEvent
+// from hitting KV every call, and putConfig refreshes it immediately on change.
+let cachedTz = null; // { value, exp } (exp in epoch ms)
+
+async function readTimezone(env) {
+  const now = Date.now();
+  if (cachedTz && cachedTz.exp > now) return cachedTz.value;
+  let value = null;
+  if (env.CONFIG) { try { value = await env.CONFIG.get('timezone'); } catch { value = null; } }
+  const tz = (value && isValidTimeZone(value)) ? value : (env.TIMEZONE || 'Asia/Bangkok');
+  cachedTz = { value: tz, exp: now + 30_000 };
+  return tz;
+}
+
+function isValidTimeZone(tz) {
+  if (typeof tz !== 'string' || !tz) return false;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return true; } catch { return false; }
+}
+
+async function getConfig(env) {
+  return json({ timezone: await readTimezone(env) });
+}
+
+async function putConfig(req, env) {
+  let body;
+  try { body = await req.json(); } catch { return error(400, 'invalid json'); }
+  if (!body || typeof body.timezone !== 'string') return error(400, 'missing field "timezone"');
+  if (!isValidTimeZone(body.timezone)) return error(400, `invalid IANA timezone: ${body.timezone}`);
+  if (!env.CONFIG) return error(500, 'CONFIG KV namespace not bound');
+  await env.CONFIG.put('timezone', body.timezone);
+  cachedTz = { value: body.timezone, exp: Date.now() + 30_000 };
+  return json({ timezone: body.timezone });
+}
+
 // === BALANCES (read Balances sheet → {updated_at, accounts}) ===
 
 async function getBalances(env) {
-  const { accounts, updatedAt } = await readBalances(env);
-  return json({ updated_at: updatedAt, accounts });
+  const token = await getAccessToken(env);
+  const [{ accounts, updatedAt }, { primaryAccount, primaryCurrency }, timezone] = await Promise.all([
+    readBalances(env, token),
+    readSettings(env, token),
+    readTimezone(env),
+  ]);
+  // `primary` / `primary_currency` let the site surface the everyday account first
+  // (highlighted on the balances screen). `timezone` is the active display zone, so
+  // read screens compute "today"/day-of from the same source the Worker uses.
+  return json({
+    updated_at: updatedAt,
+    accounts,
+    primary: primaryAccount,
+    primary_currency: primaryCurrency,
+    timezone,
+  });
 }
 
-// === DAY (filters expense events from the Events sheet for a given Bangkok day) ===
+// === DAY (filters expense events from the Events sheet for a given local day) ===
 
 async function getDay(req, env) {
   const url = new URL(req.url);
   const dateParam = url.searchParams.get('date');
+  const tz = await readTimezone(env);
 
   let ctx;
   if (dateParam) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateParam)) return error(400, 'date must be YYYY-MM-DD');
-    ctx = bangkokContext(`${dateParam}T12:00:00+07:00`);
+    const [y, m, d] = dateParam.split('-').map(Number);
+    ctx = contextFromYMD(y, m, d);
   } else {
-    ctx = bangkokContext();
+    ctx = zoneContext(null, tz);
   }
 
   const dateISO = `${ctx.year}-${pad(ctx.month)}-${pad(ctx.day)}`;
 
-  const [events, { accounts }] = await Promise.all([readEvents(env), readBalances(env)]);
+  const [events, { accounts }, { primaryCurrency }] = await Promise.all([
+    readEvents(env), readBalances(env), readSettings(env),
+  ]);
 
   const accountCurrency = {};
   for (const a of accounts) accountCurrency[a.id] = a.currency;
+  const fallbackCurrency = primaryCurrency || 'THB';
 
   const expenses = events
-    .filter((ev) => ev.type === 'expense' && ev.at && bangkokDateOf(ev.at) === dateISO)
+    .filter((ev) => ev.type === 'expense' && ev.at && dateInZone(ev.at, tz) === dateISO)
     .map((ev) => ({
       description: ev.note || (ev.from ? `с ${ev.from}` : 'расход'),
       amount: ev.amount,
-      currency: accountCurrency[ev.from] || 'THB',
+      currency: accountCurrency[ev.from] || fallbackCurrency,
       source: 'event',
       from: ev.from,
       id: ev.id,
@@ -198,7 +292,34 @@ async function getDay(req, env) {
   const totals = {};
   for (const e of expenses) totals[e.currency] = (totals[e.currency] || 0) + e.amount;
 
-  return json({ date: dateISO, section: ctx.sectionHeader, expenses, totals });
+  return json({ date: dateISO, section: ctx.sectionHeader, expenses, totals, timezone: tz });
+}
+
+// === EVENTS LOG (GET /api/events) — full read-only log for reconciliation ===
+
+// Returns every logged event in sheet order (oldest first). Optional filters:
+//   ?type=income|expense|transfer|exchange  — keep only that type
+//   ?limit=N                                — keep only the last N (after filtering)
+// client_id is the internal idempotency key and is never echoed back.
+async function getEvents(req, env) {
+  const url = new URL(req.url);
+  const type = url.searchParams.get('type');
+  if (type && !['income', 'expense', 'transfer', 'exchange'].includes(type)) {
+    return error(400, 'type must be income/expense/transfer/exchange');
+  }
+  const limitParam = url.searchParams.get('limit');
+  let limit = null;
+  if (limitParam != null) {
+    limit = parseInt(limitParam, 10);
+    if (!Number.isInteger(limit) || limit < 1) return error(400, 'limit must be a positive integer');
+  }
+
+  const events = await readEvents(env);
+  let list = events.map(({ client_id, ...pub }) => pub);
+  if (type) list = list.filter((e) => e.type === type);
+  if (limit) list = list.slice(-limit);
+
+  return json({ count: list.length, events: list });
 }
 
 // === QUICK EXPENSE (POST /api/expense) — main screen of PWA ===
@@ -211,9 +332,18 @@ async function handleQuickExpense(req, env) {
   let parsed;
   try { parsed = parseExpense(body.text); } catch (e) { return error(400, e.message); }
 
-  const defaults = defaultAccountByCurrency(env);
-  const from = defaults[parsed.currency || 'THB'];
-  if (!from) return error(500, `no default account configured for currency ${parsed.currency || 'THB'}`);
+  // No currency token → the everyday "primary" account, read from the Settings
+  // sheet (so the user switches it by editing a cell, no redeploy). A currency
+  // token routes to that currency's default account (env) instead.
+  let from;
+  if (parsed.currency) {
+    from = defaultAccountByCurrency(env)[parsed.currency];
+    if (!from) return error(500, `no default account configured for currency ${parsed.currency}`);
+  } else {
+    const { primaryAccount } = await readSettings(env);
+    from = primaryAccount;
+    if (!from) return error(500, 'no primary account configured (set it on the Settings sheet)');
+  }
 
   return createEvent(env, {
     type: 'expense',
@@ -223,6 +353,53 @@ async function handleQuickExpense(req, env) {
     at: body.now,
     client_id: body.client_id,
   });
+}
+
+// === SNAPSHOT (POST /api/snapshot) — mirror source balances, no log write ===
+
+// Sets one or more account balances directly from a source's reported snapshot.
+// Body: { balances: [{ account, amount }], updated_at? }. Used by the aggregator's
+// pollers (bybit/Trongrid/ZenMoney) to keep connected accounts mirrored. This is
+// the ONLY write path that sets a balance without an event: snapshots are not
+// operations, so the Events log is untouched. Accounts not listed keep their
+// amount. Validated all-or-nothing — an unknown id rejects the whole batch.
+//
+// NOTE on double-counting: an account mirrored by snapshot must NOT also have its
+// operations mutate the balance (that would move it twice). Logging the source's
+// operations for analytics/watchdog without touching the balance ("log-only"
+// events) is the coupled next step — it needs an Events schema column so PATCH/
+// DELETE don't reverse a mutation that never happened. Speced in
+// dev/notes/aggregator-design.md; not implemented here.
+async function handleSnapshot(req, env) {
+  let body;
+  try { body = await req.json(); } catch { return error(400, 'invalid json'); }
+  if (!body || !Array.isArray(body.balances) || body.balances.length === 0) {
+    return error(400, 'missing field "balances" (non-empty array of {account, amount})');
+  }
+  for (const b of body.balances) {
+    if (!b || typeof b.account !== 'string' || !b.account) return error(400, 'each balance needs a string "account"');
+    if (typeof b.amount !== 'number' || !isFinite(b.amount)) return error(400, `amount must be a finite number (account ${b && b.account})`);
+  }
+  if (body.updated_at !== undefined && body.updated_at !== null) {
+    if (typeof body.updated_at !== 'string' || isNaN(new Date(body.updated_at).getTime())) {
+      return error(400, 'updated_at must be an ISO string');
+    }
+  }
+
+  const token = await getAccessToken(env);
+  const { accounts, dataStartRow } = await readBalances(env, token);
+
+  let next;
+  try {
+    next = applySnapshot(accounts, body.balances);
+  } catch (e) {
+    return error(400, e.message); // unknown account id
+  }
+
+  const updatedAt = body.updated_at ? new Date(body.updated_at).toISOString() : new Date().toISOString();
+  await writeBalanceAmounts(env, next, updatedAt, token, dataStartRow);
+
+  return ok({ balances: { updated_at: updatedAt, accounts: next } });
 }
 
 // === EVENTS ===
@@ -313,6 +490,24 @@ function reverseMutation(accounts, event) {
   return roundCents(accounts);
 }
 
+// Overlay a source's balance snapshot onto a copy of accounts. Listed accounts are
+// SET to the reported balance (authority = the source itself, NOT a delta off the
+// log); accounts not in the snapshot keep their current amount. Throws on an
+// unknown id so handleSnapshot can reject the whole batch before any write.
+// This is the model's "signal 1" (snapshot): connected accounts mirror their
+// source instead of being recomputed from Σevents, so one missed op can't drift
+// them. See dev/notes/aggregator-design.md §2.
+function applySnapshot(accounts, snapshots) {
+  const next = accounts.map((a) => ({ ...a }));
+  const byId = {};
+  for (const a of next) byId[a.id] = a;
+  for (const s of snapshots) {
+    if (!byId[s.account]) throw new Error(`unknown account: ${s.account}`);
+    byId[s.account].amount = s.amount;
+  }
+  return roundCents(next);
+}
+
 function describeEvent(ev) {
   if (ev.type === 'income') return `+${ev.amount} → ${ev.to}${ev.note ? ` (${ev.note})` : ''}`;
   if (ev.type === 'expense') return `−${ev.amount} ${ev.from}${ev.note ? ` (${ev.note})` : ''}`;
@@ -351,6 +546,7 @@ async function createEvent(env, body) {
   };
 
   const token = await getAccessToken(env);
+  const tz = await readTimezone(env);
 
   // Read current balances + the event log (the latter only when we need to
   // de-duplicate a retried write). One round-trip each, in parallel.
@@ -359,11 +555,13 @@ async function createEvent(env, body) {
     clientId ? readEvents(env, token) : Promise.resolve(null),
   ]);
 
-  // Idempotency: if a recent event carries the same client_id, the previous POST
-  // already committed — return it without a second write. Window of 200 covers
-  // any plausible PWA-queue flush burst.
+  // Idempotency: if any logged event carries the same client_id, the previous POST
+  // already committed — return it without a second write. Scans the FULL log, not a
+  // trailing window: a poller using client_id as a stable source-id (e.g. a
+  // ZenMoney op id or a tx hash) must dedup against all history, else a backfill
+  // rerun silently doubles rows once the earlier ones scroll past a fixed window.
   if (clientId && events) {
-    const existing = events.slice(-200).find((e) => e.client_id === clientId);
+    const existing = events.find((e) => e.client_id === clientId);
     if (existing) {
       const { client_id, ...publicExisting } = existing;
       return ok({ event: publicExisting, balances: { updated_at: updatedAt, accounts }, deduped: true });
@@ -377,7 +575,7 @@ async function createEvent(env, body) {
   // always be recomputed from it), then write the new balances. Two requests:
   // Sheets has no cross-tab transaction, but for a single user the window is
   // negligible and a crash between them leaves only a recoverable drift.
-  await appendEvent(env, event, token);
+  await appendEvent(env, event, token, tz);
   await writeBalanceAmounts(env, newAccounts, newUpdatedAt, token, dataStartRow);
 
   // Don't echo client_id back to the client (internal idempotency key).
@@ -403,10 +601,93 @@ async function handleEventDelete(env) {
   // log would keep a phantom entry — reversing first means balances are right
   // and a re-issued undo simply pops the same row.
   await writeBalanceAmounts(env, newAccounts, updatedAt, token, dataStartRow);
-  await deleteLastEventRow(env, events.length, token);
+  await deleteEventRow(env, events.length + 1, token); // last event row = data count + header
 
   const { client_id, ...publicEvent } = last;
   return ok({ undone: publicEvent, balances: { updated_at: updatedAt, accounts: newAccounts } });
+}
+
+// Fields a PATCH may change. id and client_id are immutable (the row's identity
+// and the idempotency key); `when` is derived from `at`, never set directly.
+const PATCHABLE_FIELDS = ['type', 'from', 'to', 'amount', 'amount_to', 'note', 'at'];
+
+// PATCH /api/event/:id — correct an arbitrary past event. Merges the given fields
+// over the stored event, re-validates, then rebalances by reversing the old
+// mutation and applying the new one. The log is the source of truth, so the row
+// is rewritten first, then balances (a crash between leaves a recoverable drift,
+// same contract as createEvent's append→balances order). Pass an explicit null to
+// clear a field (e.g. {"note": null}); omitted fields keep their stored value.
+async function patchEventById(req, env, id) {
+  let body;
+  try { body = await req.json(); } catch { return error(400, 'invalid json'); }
+  if (!body || typeof body !== 'object') return error(400, 'invalid body');
+
+  const token = await getAccessToken(env);
+  const tz = await readTimezone(env);
+  const [events, { accounts, dataStartRow }] = await Promise.all([
+    readEvents(env, token),
+    readBalances(env, token),
+  ]);
+
+  const idx = events.findIndex((e) => e.id === id);
+  if (idx === -1) return error(404, `event not found: ${id}`);
+  const old = events[idx];
+
+  const merged = { ...old };
+  for (const k of PATCHABLE_FIELDS) if (k in body) merged[k] = body[k];
+
+  const v = validateEvent(merged);
+  if (!v.ok) return error(400, v.message);
+
+  const newEvent = {
+    id: old.id,
+    type: merged.type,
+    from: merged.from || null,
+    to: merged.to || null,
+    amount: Math.round(merged.amount * 100) / 100,
+    amount_to: merged.amount_to != null ? Math.round(merged.amount_to * 100) / 100 : null,
+    note: merged.note || null,
+    at: merged.at ? new Date(merged.at).toISOString() : old.at,
+    client_id: old.client_id,
+  };
+
+  // Reverse the stored event, then apply the corrected one, on one snapshot.
+  let newAccounts = accounts.map((a) => ({ ...a }));
+  newAccounts = reverseMutation(newAccounts, old);
+  newAccounts = applyMutation(newAccounts, newEvent);
+  const updatedAt = new Date().toISOString();
+  const rowNumber = idx + 2; // header at row 1, events start at row 2
+
+  await writeEventRow(env, rowNumber, newEvent, token, tz);
+  await writeBalanceAmounts(env, newAccounts, updatedAt, token, dataStartRow);
+
+  const { client_id, ...publicEvent } = newEvent;
+  return ok({ updated: publicEvent, balances: { updated_at: updatedAt, accounts: newAccounts } });
+}
+
+// DELETE /api/event/:id — drop an arbitrary past event. Mirrors undo-last:
+// reverse the balance first (so balances are right even if the row delete fails;
+// a re-issued delete by id is a no-op once the row is gone), then delete the row.
+async function deleteEventById(env, id) {
+  const token = await getAccessToken(env);
+  const [events, { accounts, dataStartRow }] = await Promise.all([
+    readEvents(env, token),
+    readBalances(env, token),
+  ]);
+
+  const idx = events.findIndex((e) => e.id === id);
+  if (idx === -1) return error(404, `event not found: ${id}`);
+  const target = events[idx];
+
+  const newAccounts = reverseMutation(accounts.map((a) => ({ ...a })), target);
+  const updatedAt = new Date().toISOString();
+  const rowNumber = idx + 2; // header at row 1, events start at row 2
+
+  await writeBalanceAmounts(env, newAccounts, updatedAt, token, dataStartRow);
+  await deleteEventRow(env, rowNumber, token);
+
+  const { client_id, ...publicEvent } = target;
+  return ok({ deleted: publicEvent, balances: { updated_at: updatedAt, accounts: newAccounts } });
 }
 
 // === GOOGLE AUTH (service-account JWT → OAuth access token) ===
@@ -514,6 +795,33 @@ async function readBalances(env, token) {
   return { accounts, updatedAt, dataStartRow: headerIdx + 2 };
 }
 
+// The everyday account/currency live on a dedicated `Settings` sheet so the user
+// can switch them by editing a cell (dropdown) — no redeploy. Layout: column A is a
+// hidden machine key (`primary_account` / `primary_currency`), column C the value.
+// env vars (PRIMARY_ACCOUNT / PRIMARY_CURRENCY) are the fallback when absent/blank.
+async function readSettings(env, token) {
+  token = token || await getAccessToken(env);
+  let rows = [];
+  try {
+    rows = await sheetsValuesGet(env, `${SETTINGS_SHEET}!A1:C`, token);
+  } catch {
+    rows = []; // Settings sheet missing → fall back to env below
+  }
+  let primaryAccount = null;
+  let primaryCurrency = null;
+  for (const r of rows) {
+    if (!r) continue;
+    const key = String(r[0] != null ? r[0] : '').trim().toLowerCase();
+    const value = r[2] != null && r[2] !== '' ? String(r[2]).trim() : null;
+    if (key === 'primary_account') primaryAccount = value;
+    else if (key === 'primary_currency') primaryCurrency = value;
+  }
+  return {
+    primaryAccount: primaryAccount || env.PRIMARY_ACCOUNT || null,
+    primaryCurrency: primaryCurrency || env.PRIMARY_CURRENCY || null,
+  };
+}
+
 async function readEvents(env, token) {
   token = token || await getAccessToken(env);
   const rows = await sheetsValuesGet(env, `${EVENTS_SHEET}!A2:J`, token);
@@ -547,20 +855,20 @@ function rowToEvent(r) {
   };
 }
 
-function eventToRow(ev) {
+function eventToRow(ev, tz) {
   return EVENT_COLS.map((c) => {
-    if (c === 'when') return formatWhen(ev.at); // display-only, derived from `at`
+    if (c === 'when') return formatWhen(ev.at, tz); // display-only, derived from `at`
     const v = ev[c];
     return v == null ? '' : v;
   });
 }
 
-async function appendEvent(env, event, token) {
+async function appendEvent(env, event, token, tz) {
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${env.SPREADSHEET_ID}/values/${encodeURIComponent(EVENTS_SHEET + '!A1')}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
   const res = await fetch(url, {
     method: 'POST',
     headers: sheetsHeaders(token),
-    body: JSON.stringify({ values: [eventToRow(event)] }),
+    body: JSON.stringify({ values: [eventToRow(event, tz)] }),
   });
   if (!res.ok) throw new Error(`values.append ${res.status}: ${await res.text()}`);
 }
@@ -603,12 +911,24 @@ async function getSheetId(env, title, token) {
   return id;
 }
 
-// Deletes the last data row of the Events sheet. eventCount = number of data
-// rows (header excluded); the row to drop is at zero-based index eventCount
-// (header is index 0).
-async function deleteLastEventRow(env, eventCount, token) {
+// Overwrites one event row in place (A:J) with the given event. Used by PATCH to
+// persist a corrected event; `when` is re-derived from `at` by eventToRow.
+async function writeEventRow(env, rowNumber, event, token, tz) {
+  const range = `${EVENTS_SHEET}!A${rowNumber}:J${rowNumber}`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${env.SPREADSHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=RAW`;
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: sheetsHeaders(token),
+    body: JSON.stringify({ values: [eventToRow(event, tz)] }),
+  });
+  if (!res.ok) throw new Error(`values.update ${range} ${res.status}: ${await res.text()}`);
+}
+
+// Deletes one data row of the Events sheet by 1-based sheet row number (header is
+// row 1, so the structural dimension index is rowNumber - 1).
+async function deleteEventRow(env, rowNumber, token) {
   const sheetId = await getSheetId(env, EVENTS_SHEET, token);
-  const startIndex = eventCount; // header at 0, data rows at 1..eventCount
+  const startIndex = rowNumber - 1;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${env.SPREADSHEET_ID}:batchUpdate`;
   const res = await fetch(url, {
     method: 'POST',

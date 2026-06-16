@@ -19,6 +19,7 @@ import {
 
 const EVENTS = 'Events';
 const BALANCES = 'Balances';
+const SETTINGS = 'Settings';
 
 // --- style constants ---
 const HEADER_BG = { red: 0.20, green: 0.29, blue: 0.37 };
@@ -27,7 +28,19 @@ const GREEN = { red: 0.11, green: 0.50, blue: 0.18 };
 const RED = { red: 0.78, green: 0.16, blue: 0.16 };
 const INFO_BG = { red: 0.93, green: 0.95, blue: 0.97 };
 const GRID = { red: 0.75, green: 0.75, blue: 0.75 };
+const TIFFANY = { red: 0.039, green: 0.729, blue: 0.710 };       // #0abab5 — app accent, marks the primary account
+const TIFFANY_BG = { red: 0.82, green: 0.95, blue: 0.94 };       // light tint behind the SETTINGS value cells
 const NUMFMT = { type: 'NUMBER', pattern: '#,##0.00' }; // ru_RU: optional-decimal patterns dangle a separator
+// Per-currency number format: amount stays a number (Worker reads it unchanged),
+// the symbol is a display suffix. ₮ = Tether (USDT). Edit symbols here.
+const CURSYM = { RUB: '₽', THB: '฿', USDT: '₮', VND: '₫' };
+// Currencies with no minor unit — display without decimals (e.g. Vietnamese dong).
+const NODEC = new Set(['VND']);
+const numFmtCur = (c) => {
+  if (!CURSYM[c]) return NUMFMT;
+  const digits = NODEC.has(c) ? '#,##0' : '#,##0.00';
+  return { type: 'NUMBER', pattern: `${digits}" ${CURSYM[c]}"` };
+};
 const border = { style: 'SOLID', width: 1, color: GRID };
 
 const HEADER_FIELDS = 'userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)';
@@ -80,25 +93,33 @@ function boldCell(sheetId, r, c) {
   const byTitle = Object.fromEntries(meta.sheets.map((s) => [s.properties.title, s]));
   const ev = byTitle[EVENTS] || die('Events sheet not found');
   const bal = byTitle[BALANCES] || die('Balances sheet not found');
+  const settings = byTitle[SETTINGS] || null; // optional dedicated settings tab
   const evId = ev.properties.sheetId;
   const balId = bal.properties.sheetId;
+  const setId = settings ? settings.properties.sheetId : null;
 
-  // Events: count data rows (When column A non-empty).
-  const evWhen = await valuesGet(token, id, `${EVENTS}!A2:A`);
-  const lastEv = 1 + evWhen.filter((r) => r[0] != null && r[0] !== '').length; // 1-based
+  // Events: read When/Type/From/To for data rows (When column A non-empty).
+  const evData = await valuesGet(token, id, `${EVENTS}!A2:D`);
+  const evRows = evData.filter((r) => r[0] != null && r[0] !== '');
+  const lastEv = 1 + evRows.length; // 1-based
 
-  // Balances: scan for accounts header + count + currencies, then derive totals rows.
+  // Balances: scan for accounts header + count + currencies + id→currency map.
   const balRows = await valuesGet(token, id, `${BALANCES}!A1:F`);
   let hr = -1;
   for (let i = 0; i < balRows.length; i++) if (balRows[i] && String(balRows[i][0]).toLowerCase() === 'id') { hr = i; break; }
   if (hr === -1) die('Balances: accounts header not found');
   const currencies = [];
+  const curMap = {};
+  const accCurs = [];           // per-account currency, in row order
   let acc = 0;
   for (let i = hr + 1; i < balRows.length; i++) {
     const r = balRows[i];
     if (!r || r[0] == null || r[0] === '') break;
     acc++;
-    const c = r[3]; if (c != null && c !== '' && !currencies.includes(String(c))) currencies.push(String(c));
+    const c = r[3] != null ? String(r[3]) : '';
+    accCurs.push(c);
+    curMap[String(r[0])] = c;
+    if (c !== '' && !currencies.includes(c)) currencies.push(c);
   }
   const headerRow = hr;                 // 0-based row of "id" header
   const dataStart = hr + 1;             // 0-based first account row
@@ -111,10 +132,18 @@ function boldCell(sheetId, r, c) {
   const reqs = [];
 
   // delete existing conditional rules (idempotency)
-  for (const s of [ev, bal]) {
+  for (const s of [ev, bal, settings].filter(Boolean)) {
     const n = (s.conditionalFormats || []).length;
     for (let i = 0; i < n; i++) reqs.push({ deleteConditionalFormatRule: { sheetId: s.properties.sheetId, index: 0 } });
   }
+
+  // Full format reset on both sheets BEFORE repainting — clears stale cell
+  // formatting (dark header leftovers next to "Updated", orphan borders in far
+  // columns) that earlier schema/format runs left behind. Repaints below override.
+  // Dimension props (hidden/frozen/widths) are not userEnteredFormat, so untouched.
+  reqs.push({ repeatCell: { range: { sheetId: evId }, cell: {}, fields: 'userEnteredFormat' } });
+  reqs.push({ repeatCell: { range: { sheetId: balId }, cell: {}, fields: 'userEnteredFormat' } });
+  if (setId != null) reqs.push({ repeatCell: { range: { sheetId: setId }, cell: {}, fields: 'userEnteredFormat' } });
 
   // ---- Events ----
   reqs.push(freeze(evId, 1));
@@ -124,9 +153,21 @@ function boldCell(sheetId, r, c) {
   reqs.push(align(evId, 1, 1, 'CENTER'));                 // Type
   reqs.push(align(evId, 1, 2, 'CENTER'));                 // From
   reqs.push(align(evId, 1, 3, 'CENTER'));                 // To
-  reqs.push(align(evId, 1, 4, 'RIGHT', NUMFMT));          // Amount
-  reqs.push(align(evId, 1, 5, 'RIGHT', NUMFMT));          // Received
+  reqs.push(align(evId, 1, 4, 'RIGHT'));                  // Amount (numFmt set per-row below)
+  reqs.push(align(evId, 1, 5, 'RIGHT'));                  // Received (numFmt set per-row below)
   reqs.push(align(evId, 1, 6, 'LEFT'));                   // Note
+  // Per-row currency suffix. Amount (E) currency = to-account for income, else
+  // from-account; Received (F) is only set on exchange rows = to-account currency.
+  const eCurOf = (type, from, to) => (type === 'income' ? curMap[to] : curMap[from]);
+  const eCurs = evRows.map((r) => eCurOf(String(r[1]), r[2], r[3]));
+  for (let s = 0; s < eCurs.length;) {            // run-length: one repeatCell per same-currency block
+    let e = s + 1; while (e < eCurs.length && eCurs[e] === eCurs[s]) e++;
+    reqs.push({ repeatCell: { range: R(evId, 1 + s, 1 + e, 4, 5), cell: { userEnteredFormat: { numberFormat: numFmtCur(eCurs[s]) } }, fields: 'userEnteredFormat.numberFormat' } });
+    s = e;
+  }
+  evRows.forEach((r, i) => {
+    if (String(r[1]) === 'exchange') reqs.push({ repeatCell: { range: R(evId, 1 + i, 2 + i, 5, 6), cell: { userEnteredFormat: { numberFormat: numFmtCur(curMap[r[3]]) } }, fields: 'userEnteredFormat.numberFormat' } });
+  });
   reqs.push(borders(evId, 0, lastEv, 0, 7));              // A1:G{last}
   reqs.push(hidden(evId, 0, 7, false));                   // A..G visible
   reqs.push(hidden(evId, 7, 10, true));                   // id, at, client_id hidden
@@ -143,30 +184,100 @@ function boldCell(sheetId, r, c) {
   reqs.push(cond('=$B2="expense"', RED));
 
   // ---- Balances ----
+  // Column A holds the account `id` (Worker's scan key) but is hidden — only
+  // Name/Amount/Currency are shown. The "Updated" and "Totals" side-labels were
+  // moved one column right (into B/C) so they stay visible.
   reqs.push(freeze(balId, 0));
-  reqs.push(boldCell(balId, 0, 0));                       // A1 "Updated"
-  reqs.push(align(balId, 0, 1, 'LEFT'));                  // B1 date (single row via align from row 0)
-  reqs.push(header(balId, headerRow, 0, 4));              // accounts header
+  reqs.push(boldCell(balId, 0, 1));                       // B1 "Updated"
+  reqs.push(align(balId, 0, 2, 'LEFT'));                  // C1 date (single row via align from row 0)
+  reqs.push(header(balId, headerRow, 0, 4));              // accounts header (A hidden, B:D shown)
   // account rows alignment
   reqs.push({ repeatCell: { range: R(balId, dataStart, dataEnd, 0, 1), cell: { userEnteredFormat: { horizontalAlignment: 'CENTER', verticalAlignment: 'MIDDLE' } }, fields: 'userEnteredFormat(horizontalAlignment,verticalAlignment)' } });
   reqs.push({ repeatCell: { range: R(balId, dataStart, dataEnd, 1, 2), cell: { userEnteredFormat: { horizontalAlignment: 'LEFT', verticalAlignment: 'MIDDLE' } }, fields: 'userEnteredFormat(horizontalAlignment,verticalAlignment)' } });
-  reqs.push({ repeatCell: { range: R(balId, dataStart, dataEnd, 2, 3), cell: { userEnteredFormat: { horizontalAlignment: 'RIGHT', verticalAlignment: 'MIDDLE', numberFormat: NUMFMT } }, fields: 'userEnteredFormat(horizontalAlignment,verticalAlignment,numberFormat)' } });
+  accCurs.forEach((c, i) => reqs.push({ repeatCell: { range: R(balId, dataStart + i, dataStart + i + 1, 2, 3), cell: { userEnteredFormat: { horizontalAlignment: 'RIGHT', verticalAlignment: 'MIDDLE', numberFormat: numFmtCur(c) } }, fields: 'userEnteredFormat(horizontalAlignment,verticalAlignment,numberFormat)' } }));
   reqs.push({ repeatCell: { range: R(balId, dataStart, dataEnd, 3, 4), cell: { userEnteredFormat: { horizontalAlignment: 'CENTER', verticalAlignment: 'MIDDLE' } }, fields: 'userEnteredFormat(horizontalAlignment,verticalAlignment)' } });
-  // totals block
-  reqs.push(boldCell(balId, totalsHeader, 0));           // "Totals"
-  reqs.push({ repeatCell: { range: R(balId, totalsStart, totalsEnd, 0, 1), cell: { userEnteredFormat: { horizontalAlignment: 'LEFT', textFormat: { bold: true } } }, fields: 'userEnteredFormat(horizontalAlignment,textFormat)' } });
-  reqs.push({ repeatCell: { range: R(balId, totalsStart, totalsEnd, 1, 2), cell: { userEnteredFormat: { horizontalAlignment: 'RIGHT', numberFormat: NUMFMT } }, fields: 'userEnteredFormat(horizontalAlignment,numberFormat)' } });
-  // light bg on the Updated + Totals labels
-  reqs.push({ repeatCell: { range: R(balId, 0, 1, 0, 2), cell: { userEnteredFormat: { backgroundColor: INFO_BG } }, fields: 'userEnteredFormat.backgroundColor' } });
+  // totals block — styled like the accounts table: a dark "TOTALS" header bar
+  // (merged across B:C, centered) over bordered currency rows.
+  reqs.push({ unmergeCells: { range: R(balId, totalsHeader, totalsHeader + 1, 1, 3) } });
+  reqs.push({ mergeCells: { range: R(balId, totalsHeader, totalsHeader + 1, 1, 3), mergeType: 'MERGE_ALL' } });
+  reqs.push(header(balId, totalsHeader, 1, 3));          // dark bar across B:C, centered
+  reqs.push({ repeatCell: { range: R(balId, totalsStart, totalsEnd, 1, 2), cell: { userEnteredFormat: { horizontalAlignment: 'LEFT', textFormat: { bold: true } } }, fields: 'userEnteredFormat(horizontalAlignment,textFormat)' } });
+  currencies.forEach((c, i) => reqs.push({ repeatCell: { range: R(balId, totalsStart + i, totalsStart + i + 1, 2, 3), cell: { userEnteredFormat: { horizontalAlignment: 'RIGHT', numberFormat: numFmtCur(c) } }, fields: 'userEnteredFormat(horizontalAlignment,numberFormat)' } }));
+  // light bg on the Updated label + date (B1:C1)
+  reqs.push({ repeatCell: { range: R(balId, 0, 1, 1, 3), cell: { userEnteredFormat: { backgroundColor: INFO_BG } }, fields: 'userEnteredFormat.backgroundColor' } });
   // borders
   reqs.push(borders(balId, headerRow, dataEnd, 0, 4));   // accounts table
-  reqs.push(borders(balId, 0, 1, 0, 2));                 // Updated box
-  reqs.push(borders(balId, totalsHeader, totalsEnd, 0, 2)); // totals box
-  // hide raw machinery (E spacer, F raw ISO); ensure A..D visible
-  reqs.push(hidden(balId, 0, 4, false));
+  reqs.push(borders(balId, 0, 1, 1, 3));                 // Updated box (B1:C1)
+  reqs.push(borders(balId, totalsHeader, totalsEnd, 1, 3)); // totals box (B:C)
+  // hide the id column (A) and raw machinery (E spacer, F raw ISO); show B..D
+  reqs.push(hidden(balId, 0, 1, true));
+  reqs.push(hidden(balId, 1, 4, false));
   reqs.push(hidden(balId, 4, 6, true));
-  const balW = { 0: 130, 1: 150, 2: 100, 3: 80 };
+  const balW = { 0: 60, 1: 175, 2: 110, 3: 90 };
   for (const [c, px] of Object.entries(balW)) reqs.push(width(balId, Number(c), px));
+
+  // Primary-account highlight: the everyday account (chosen on the Settings sheet) is
+  // marked Tiffany on the accounts table. Conditional formulas can't reference another
+  // sheet directly, so Balances!E1 mirrors Settings!C3 (hidden) and the rule compares
+  // each row's id (col A) against $E$1 — it auto-follows whatever Settings holds.
+  reqs.push({
+    addConditionalFormatRule: {
+      index: 0,
+      rule: {
+        ranges: [R(balId, dataStart, dataEnd, 1, 4)], // B:D over account rows
+        booleanRule: {
+          condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: `=$A${dataStart + 1}=$E$1` }] },
+          format: { backgroundColor: TIFFANY, textFormat: { bold: true } },
+        },
+      },
+    },
+  });
+
+  // ---- Settings sheet (dedicated tab) ----
+  // Layout: A = hidden machine key (primary_account / primary_currency), B = human
+  // label, C = value (account via dropdown, currency via VLOOKUP). Styled prominent.
+  if (setId != null) {
+    const SET_TITLE = { red: 0.04, green: 0.45, blue: 0.44 }; // deep Tiffany for the title bar
+    // title bar B1:C1
+    reqs.push({ unmergeCells: { range: R(setId, 0, 1, 1, 3) } });
+    reqs.push({ mergeCells: { range: R(setId, 0, 1, 1, 3), mergeType: 'MERGE_ALL' } });
+    reqs.push({ repeatCell: { range: R(setId, 0, 1, 1, 3), cell: { userEnteredFormat: { backgroundColor: SET_TITLE, horizontalAlignment: 'CENTER', verticalAlignment: 'MIDDLE', textFormat: { bold: true, fontSize: 12, foregroundColor: WHITE } } }, fields: HEADER_FIELDS } });
+    reqs.push(rowHeight(setId, 0, 34));
+    // label cells (B3:B4) bold-left; value cells (C3:C4) Tiffany tint, bold, centered
+    reqs.push({ repeatCell: { range: R(setId, 2, 4, 1, 2), cell: { userEnteredFormat: { horizontalAlignment: 'LEFT', verticalAlignment: 'MIDDLE', textFormat: { bold: true } } }, fields: 'userEnteredFormat(horizontalAlignment,verticalAlignment,textFormat)' } });
+    reqs.push({ repeatCell: { range: R(setId, 2, 4, 2, 3), cell: { userEnteredFormat: { backgroundColor: TIFFANY_BG, horizontalAlignment: 'CENTER', verticalAlignment: 'MIDDLE', textFormat: { bold: true } } }, fields: 'userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)' } });
+    reqs.push(borders(setId, 2, 4, 1, 3)); // box around the two key/value rows
+    // help note (B6) — muted italic
+    reqs.push({ repeatCell: { range: R(setId, 5, 6, 1, 3), cell: { userEnteredFormat: { wrapStrategy: 'WRAP', textFormat: { italic: true, foregroundColor: { red: 0.4, green: 0.4, blue: 0.4 } } } }, fields: 'userEnteredFormat(wrapStrategy,textFormat)' } });
+    // dropdown of account ids on the "Primary account" value cell (Settings!C3),
+    // sourced from the hidden id column on Balances (cross-sheet ONE_OF_RANGE).
+    reqs.push({
+      setDataValidation: {
+        range: R(setId, 2, 3, 2, 3),
+        rule: {
+          condition: { type: 'ONE_OF_RANGE', values: [{ userEnteredValue: `=${BALANCES}!$A$${dataStart + 1}:$A$${dataEnd}` }] },
+          showCustomUi: true, strict: true,
+        },
+      },
+    });
+    // dropdown of currencies on the "Primary currency" value cell (Settings!C4).
+    reqs.push({
+      setDataValidation: {
+        range: R(setId, 3, 4, 2, 3),
+        rule: {
+          condition: { type: 'ONE_OF_LIST', values: Object.keys(CURSYM).map((c) => ({ userEnteredValue: c })) },
+          showCustomUi: true, strict: true,
+        },
+      },
+    });
+    // hide the machine-key column A; widen B/C for readability
+    reqs.push(hidden(setId, 0, 1, true));
+    reqs.push(width(setId, 1, 150));
+    reqs.push(width(setId, 2, 130));
+    console.log('  Settings sheet styled; dropdown + highlight (via Balances!E1) wired');
+  } else {
+    console.log('  (no Settings sheet — primary highlight uses Balances!E1 mirror only)');
+  }
 
   await batchUpdate(token, id, reqs);
   console.log(`✓ formatting applied (${reqs.length} requests)`);

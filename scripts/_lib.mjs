@@ -13,19 +13,19 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 export function die(msg) { console.error(`✗ ${msg}`); process.exit(1); }
 
 export function loadSA(p) {
-  const file = p || process.env.SA_KEY || path.join(ROOT, 'worker', 'google-service-account.json');
+  const file = p || process.env.SA_KEY || path.join(ROOT, 'api', 'google-service-account.json');
   if (!fs.existsSync(file)) die(`service-account key not found: ${file}`);
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
 export function spreadsheetId() {
   if (process.env.SPREADSHEET_ID) return process.env.SPREADSHEET_ID;
-  const toml = path.join(ROOT, 'worker', 'wrangler.toml');
+  const toml = path.join(ROOT, 'api', 'wrangler.toml');
   if (fs.existsSync(toml)) {
     const m = fs.readFileSync(toml, 'utf8').match(/^\s*SPREADSHEET_ID\s*=\s*"([^"]+)"/m);
     if (m) return m[1];
   }
-  die('SPREADSHEET_ID not set and not found in worker/wrangler.toml');
+  die('SPREADSHEET_ID not set and not found in api/wrangler.toml');
 }
 
 export async function getToken(sa) {

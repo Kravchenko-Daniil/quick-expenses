@@ -3,15 +3,9 @@ const BAL_CACHE_KEY = 'cache:balances';
 
 const $ = (id) => document.getElementById(id);
 
-const pad2 = (n) => String(n).padStart(2, '0');
-function todayInBangkok() {
-  const fmt = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Bangkok',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-  });
-  const parts = Object.fromEntries(fmt.formatToParts(new Date()).map((p) => [p.type, p.value]));
-  return `${parts.year}-${parts.month}-${parts.day}`;
-}
+// "Today" and the backdate instant come from AppConfig (config.js), whose zone is
+// the single source of truth (server KV, GET/PUT /api/config).
+const todayLocal = () => AppConfig.today();
 
 function readBalCache() {
   try { return JSON.parse(localStorage.getItem(BAL_CACHE_KEY) || 'null'); } catch { return null; }
@@ -24,7 +18,7 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
-const CURRENCY_DISPLAY = { THB: '฿', USDT: 'USDT', RUB: '₽' };
+const CURRENCY_DISPLAY = { THB: '฿', USDT: 'USDT', RUB: '₽', VND: '₫' };
 
 const state = {
   type: 'income',
@@ -85,6 +79,7 @@ async function loadBalances() {
       return;
     }
     const data = await res.json();
+    AppConfig.cacheFrom(data); // keep the local zone in sync with the server
     writeBalCache(data);
     state.accounts = Array.isArray(data.accounts) ? data.accounts : [];
     state.loaded = true;
@@ -220,8 +215,8 @@ async function submit() {
   }
   if (note) payload.note = note;
   const at = $('at').value;
-  const today = todayInBangkok();
-  if (at && at !== today) payload.at = `${at}T12:00:00+07:00`;
+  const today = todayLocal();
+  if (at && at !== today) payload.at = AppConfig.zonedNoonISO(at);
 
   $('submit').disabled = true;
   setStatus('отправляю…');
@@ -254,7 +249,7 @@ async function submit() {
     $('amount').value = '';
     $('from-amount').value = '';
     $('note').value = '';
-    $('at').value = todayInBangkok();
+    $('at').value = todayLocal();
     update();
     setStatus('');
   } catch {
@@ -337,18 +332,22 @@ $('note').addEventListener('input', (e) => { state.note = e.target.value; });
 $('submit').addEventListener('click', submit);
 $('undo').addEventListener('click', undoLast);
 
-$('at').value = todayInBangkok();
-$('at').max = todayInBangkok();
+$('at').value = todayLocal();
+$('at').max = todayLocal();
 
 const overlay = $('overlay');
 $('token').value = localStorage.getItem(TOKEN_KEY) || '';
-$('gear').addEventListener('click', () => overlay.classList.add('open'));
+AppConfig.populateSelect($('tz-select'));
+$('gear').addEventListener('click', () => { AppConfig.populateSelect($('tz-select')); overlay.classList.add('open'); });
 $('close').addEventListener('click', () => overlay.classList.remove('open'));
 overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('open'); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') overlay.classList.remove('open'); });
-$('save-config').addEventListener('click', () => {
+$('save-config').addEventListener('click', async () => {
   localStorage.setItem(TOKEN_KEY, $('token').value.trim());
+  await AppConfig.saveTimezone($('tz-select').value);
   overlay.classList.remove('open');
+  $('at').value = todayLocal();
+  $('at').max = todayLocal();
   loadBalances();
 });
 

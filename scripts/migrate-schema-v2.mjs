@@ -42,7 +42,7 @@ const ACCOUNT_ORDER = [
 
 const EVENTS_HEADER = ['When', 'Type', 'From', 'To', 'Amount', 'Received', 'Note', 'id', 'at', 'client_id'];
 
-// formatWhen — must match worker/src/index.js. Noon-exact = backdate placeholder
+// formatWhen — must match api/src/index.js. Noon-exact = backdate placeholder
 // → date only; otherwise DD.MM.YYYY HH:MM (Bangkok).
 function formatWhen(iso) {
   if (!iso) return '';
@@ -138,7 +138,8 @@ const remapAcc = (id) => (id == null || id === '' ? id : (RENAME[id] || id));
     { range: `${BALANCES}!A${totalsStart}:A${totalsStart + currencies.length - 1}`, values: currencies.map((c) => [c]) },
   ];
   // USER_ENTERED writes (formulas)
-  const prettyUpdated = `=IF($F$1=""${sep}"—"${sep}TEXT(DATEVALUE(LEFT($F$1${sep}10))${sep}"DD.MM.YYYY")&" "&IFERROR(MID($F$1${sep}12${sep}5)${sep}""))`;
+  // F1 is raw UTC ISO (…Z); shift +7h for Bangkok display (Thailand = UTC+7, no DST).
+  const prettyUpdated = `=IF($F$1=""${sep}"—"${sep}IFERROR(TEXT(DATEVALUE(LEFT($F$1${sep}10))+TIMEVALUE(MID($F$1${sep}12${sep}8))+7/24${sep}"DD.MM.YYYY HH:MM")${sep}$F$1))`;
   const formulaData = [
     { range: `${BALANCES}!B1`, values: [[prettyUpdated]] },
     { range: `${BALANCES}!B${totalsStart}:B${totalsStart + currencies.length - 1}`, values: currencies.map((c) => [`=SUMIF(D:D${sep}"${c}"${sep}C:C)`]) },

@@ -1,0 +1,47 @@
+name = "my-finance-worker"
+main = "src/index.js"
+compatibility_date = "2026-04-28"
+
+# Маршрут Worker'а. Замени на свой домен.
+# Path-prefix `/api/*` чтобы PWA и Worker могли жить на одном домене (PWA на Pages, Worker перехватывает только /api/*).
+# `workers_dev = false` отключает fallback на workers.dev — единственный путь через кастомный домен.
+workers_dev = false
+preview_urls = false
+[[routes]]
+pattern = "your-domain.example.com/api/*"
+zone_name = "example.com"
+
+# KV namespace for mutable app config (display `timezone`). Single source of truth,
+# read by the Worker and exposed via GET/PUT /api/config so the site can change it
+# from any device without a redeploy. Create once, then paste the printed id:
+#   npx wrangler@latest kv namespace create CONFIG
+[[kv_namespaces]]
+binding = "CONFIG"
+id = "your-kv-namespace-id"
+
+# Public, non-secret config. Code reads these as env.SPREADSHEET_ID, env.PRIMARY_*, env.DEFAULT_ACCOUNT_*.
+# - SPREADSHEET_ID — id Google-таблицы (из URL: docs.google.com/spreadsheets/d/<ЭТО>/edit).
+#   В таблице два листа: `Events` (лог) и `Balances` (текущие балансы счетов).
+# - TIMEZONE — ФОЛБЭК зоны отображения, если ключ `timezone` в KV не задан. Живое
+#   значение меняется с сайта (PUT /api/config), здесь — только начальный сид.
+# - PRIMARY_ACCOUNT / PRIMARY_CURRENCY — ФОЛБЭК для повседневного счёта/валюты
+#   (quick-expense без токена → этот счёт). Источник правды — блок SETTINGS в листе
+#   Balances (ячейки Primary account / Primary currency), воркер читает их оттуда;
+#   эти vars берутся, только если ячеек нет/пусты. Переключение — правкой ячейки.
+# - DEFAULT_ACCOUNT_* — id счёта, на который роутится quick-expense при распознавании
+#   валютного токена в тексте (usdt/rub/руб/thb/vnd и их слова-стемы).
+[vars]
+SPREADSHEET_ID = "your-spreadsheet-id"
+TIMEZONE = "Asia/Bangkok"
+PRIMARY_ACCOUNT = "everyday-account-id"
+PRIMARY_CURRENCY = "THB"
+DEFAULT_ACCOUNT_USDT = "usdt-account-id"
+DEFAULT_ACCOUNT_RUB = "rub-account-id"
+DEFAULT_ACCOUNT_THB = "thb-account-id"
+DEFAULT_ACCOUNT_VND = "vnd-account-id"
+
+# Real secrets are NOT in this file — set via wrangler CLI:
+#   npx wrangler@latest secret put GOOGLE_SA_JSON
+#     (полный JSON сервисного аккаунта Google с доступом Editor к таблице)
+#   npx wrangler@latest secret put FINANCE_WORKER_API_TOKEN
+#     (long random string used by PWA as Bearer)

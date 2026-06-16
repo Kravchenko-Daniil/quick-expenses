@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#0a0a0a">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Траты">
-  <title>Траты</title>
+  <meta name="apple-mobile-web-app-title" content="Траты дня">
+  <title>Траты дня</title>
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icon.svg">
   <link rel="icon" type="image/svg+xml" href="icon.svg">
@@ -18,7 +18,7 @@
       background: #0a0a0a;
       color: #f0f0f0;
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
-      font-size: 18px;
+      font-size: 17px;
       display: flex;
       flex-direction: column;
       padding: max(env(safe-area-inset-top), 1rem) 1rem max(env(safe-area-inset-bottom), 1rem);
@@ -27,76 +27,104 @@
       flex: 1;
       display: flex;
       flex-direction: column;
-      justify-content: center;
       gap: 1rem;
       max-width: 480px;
       margin: 0 auto;
       width: 100%;
+      padding-top: 2.5rem;
     }
-    h1 { font-size: 1rem; font-weight: 500; opacity: 0.5; text-align: center; letter-spacing: 0.04em; text-transform: uppercase; }
-    form { display: flex; flex-direction: column; gap: 0.75rem; }
-    input[type="text"], input[type="url"], input[type="password"] {
-      width: 100%;
-      padding: 1.25rem 1rem;
-      background: #1a1a1a;
-      color: #f0f0f0;
-      border: 2px solid #2a2a2a;
-      border-radius: 16px;
-      font-size: 1.25rem;
-      outline: none;
-      font-family: inherit;
-    }
-    input:focus { border-color: #0abab5; }
-    button {
-      padding: 1.25rem;
-      background: #0abab5;
-      color: #0a0a0a;
-      border: 0;
-      border-radius: 16px;
-      font-size: 1.1rem;
-      font-weight: 600;
-      cursor: pointer;
-      font-family: inherit;
-    }
-    button:active { transform: scale(0.98); }
-    button:disabled { opacity: 0.5; }
-    #status { min-height: 2rem; text-align: center; font-size: 0.95rem; opacity: 0.85; line-height: 1.4; }
-    #status.ok { color: #5fd37e; }
-    #status.err { color: #e87171; }
-    #status.queue { color: #f0c75e; }
-    #queue-info { font-size: 0.8rem; opacity: 0.4; text-align: center; }
+    h1 { font-size: 0.95rem; font-weight: 500; opacity: 0.5; text-align: center; letter-spacing: 0.04em; text-transform: uppercase; }
     .topnav {
-      position: fixed;
-      top: max(env(safe-area-inset-top), 0.5rem);
-      left: 0.5rem;
-      display: flex;
-      gap: 0;
-      z-index: 10;
+      position: fixed; top: max(env(safe-area-inset-top), 0.5rem); left: 0.5rem;
+      display: flex; gap: 0; z-index: 10;
     }
     .topbtn, #gear {
-      width: 44px;
-      height: 44px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: transparent;
-      color: #f0f0f0;
-      opacity: 0.4;
-      padding: 0;
-      border: 0;
-      border-radius: 50%;
-      text-decoration: none;
-      cursor: pointer;
+      width: 44px; height: 44px;
+      display: flex; align-items: center; justify-content: center;
+      background: transparent; color: #f0f0f0; opacity: 0.4;
+      padding: 0; border: 0; border-radius: 50%;
+      text-decoration: none; cursor: pointer;
     }
     .topbtn.active { color: #0abab5; opacity: 1; }
     .topbtn:active, #gear:active { transform: scale(0.92); }
     .topbtn svg, #gear svg { width: 22px; height: 22px; }
-    #gear {
-      position: fixed;
-      top: max(env(safe-area-inset-top), 0.5rem);
-      right: 0.5rem;
-      z-index: 10;
+    #gear { position: fixed; top: max(env(safe-area-inset-top), 0.5rem); right: 0.5rem; z-index: 10; }
+
+    .day-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
     }
+    .day-nav button {
+      width: 44px;
+      height: 44px;
+      background: transparent;
+      color: #f0f0f0;
+      opacity: 0.65;
+      border: 0;
+      border-radius: 12px;
+      cursor: pointer;
+      font-family: inherit;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .day-nav button:active:not(:disabled) { transform: scale(0.92); background: #141414; }
+    .day-nav button:disabled { opacity: 0.18; cursor: not-allowed; }
+    .day-nav button svg { width: 22px; height: 22px; }
+    .day-nav .label {
+      flex: 1;
+      text-align: center;
+      font-size: 1.05rem;
+      font-weight: 500;
+    }
+    .day-nav .label.today { color: #0abab5; }
+
+    .list {
+      display: flex;
+      flex-direction: column;
+      background: #141414;
+      border: 1px solid #1f1f1f;
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      padding: 0.85rem 1rem;
+      gap: 0.5rem;
+      border-bottom: 1px solid #1f1f1f;
+    }
+    .row:last-child { border-bottom: 0; }
+    .row .desc { font-size: 0.95rem; opacity: 0.85; word-break: break-word; }
+    .row .amt { font-size: 1rem; font-weight: 600; font-variant-numeric: tabular-nums; opacity: 0.95; flex-shrink: 0; }
+    .row.total { background: #0abab510; border-top: 1px solid #0abab533; padding: 1rem; }
+    .row.total .desc { font-weight: 600; opacity: 1; font-size: 1rem; }
+    .row.total .amt { font-size: 1.2rem; color: #0abab5; }
+    .tag {
+      display: inline-block;
+      margin-left: 0.4rem;
+      padding: 0.05rem 0.4rem;
+      font-size: 0.65rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      background: #0abab522;
+      color: #0abab5;
+      border-radius: 6px;
+      font-weight: 500;
+      vertical-align: middle;
+    }
+    .empty {
+      padding: 2.5rem 1rem;
+      text-align: center;
+      opacity: 0.4;
+      font-size: 0.95rem;
+    }
+    #status { min-height: 1.4rem; text-align: center; font-size: 0.9rem; opacity: 0.85; }
+    #status.err { color: #e87171; }
+
     #overlay {
       position: fixed;
       inset: 0;
@@ -122,16 +150,7 @@
     }
     #panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem; }
     #panel-head h2 { font-size: 0.9rem; font-weight: 500; opacity: 0.7; letter-spacing: 0.04em; text-transform: uppercase; }
-    #close {
-      width: 32px;
-      height: 32px;
-      padding: 0;
-      background: transparent;
-      color: #f0f0f0;
-      opacity: 0.5;
-      font-size: 1.4rem;
-      border-radius: 50%;
-    }
+    #close { width: 32px; height: 32px; padding: 0; background: transparent; color: #f0f0f0; opacity: 0.5; font-size: 1.4rem; border: 0; border-radius: 50%; cursor: pointer; }
     #panel input, #panel button.action {
       width: 100%;
       padding: 0.85rem 1rem;
@@ -146,15 +165,14 @@
       outline: none;
       font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
       font-size: 0.85rem;
-      letter-spacing: 0.01em;
     }
     #panel input:focus { border-color: #0abab5; }
-    #panel button.action { background: #0abab5; color: #0a0a0a; font-weight: 600; margin-top: 0.25rem; border: 0; }
+    #panel button.action { background: #0abab5; color: #0a0a0a; font-weight: 600; margin-top: 0.25rem; border: 0; cursor: pointer; }
   </style>
 </head>
 <body>
   <nav class="topnav">
-    <a href="./" class="topbtn active" aria-label="Запись">
+    <a href="./" class="topbtn" aria-label="Запись">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
     </a>
     <a href="events.html" class="topbtn" aria-label="События">
@@ -163,7 +181,7 @@
     <a href="balances.html" class="topbtn" aria-label="Балансы">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>
     </a>
-    <a href="expenses.html" class="topbtn" aria-label="За день">
+    <a href="expenses.html" class="topbtn active" aria-label="За день">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
     </a>
   </nav>
@@ -174,14 +192,23 @@
     </svg>
   </button>
   <main>
-    <h1>Записать трату</h1>
-    <form id="f">
-      <input id="text" type="text" placeholder="кофе 350" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send" required>
-      <button type="submit" id="submit">Записать</button>
-    </form>
+    <h1>Траты за день</h1>
+
+    <div class="day-nav">
+      <button type="button" id="prev" aria-label="Предыдущий день">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <span class="label" id="date-label">…</span>
+      <button type="button" id="next" aria-label="Следующий день">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </button>
+    </div>
+
+    <div id="content"></div>
+
     <div id="status"></div>
-    <div id="queue-info"></div>
   </main>
+
   <div id="overlay">
     <div id="panel">
       <div id="panel-head">
@@ -189,9 +216,13 @@
         <button type="button" id="close" aria-label="Закрыть">×</button>
       </div>
       <input id="token" type="password" placeholder="Bearer token" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <label for="tz-select" style="display:block;margin:14px 0 6px;font-size:14px;opacity:0.7">Часовой пояс</label>
+      <select id="tz-select" style="width:100%;padding:10px;border-radius:8px;font-size:15px;box-sizing:border-box"></select>
       <button type="button" class="action" id="save-config">Сохранить</button>
     </div>
   </div>
-  <script src="app.js"></script>
+
+  <script src="config.js"></script>
+  <script src="expenses.js"></script>
 </body>
 </html>

@@ -9,9 +9,9 @@
 //   SOURCE_DIR        — dir holding balances.json, events.json, archive/*.md
 //                       (the local clone of the private data repo). REQUIRED.
 //   SPREADSHEET_ID    — target spreadsheet id. Falls back to parsing
-//                       worker/wrangler.toml.
+//                       api/wrangler.toml.
 //   SA_KEY            — path to the service-account JSON.
-//                       Default: worker/google-service-account.json
+//                       Default: api/google-service-account.json
 //   DEFAULT_ACCOUNT_THB — account id markdown (cash/THB) expenses map to.
 //                       Default: cash
 //
@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const SOURCE_DIR = process.env.SOURCE_DIR;
-const SA_KEY = process.env.SA_KEY || path.join(ROOT, 'worker', 'google-service-account.json');
+const SA_KEY = process.env.SA_KEY || path.join(ROOT, 'api', 'google-service-account.json');
 const THB_ACCOUNT = process.env.DEFAULT_ACCOUNT_THB || 'cash';
 
 const EVENT_COLS = ['id', 'type', 'from', 'to', 'amount', 'amount_to', 'note', 'at', 'client_id'];
@@ -40,12 +40,12 @@ if (!fs.existsSync(SA_KEY)) die(`service-account key not found: ${SA_KEY}`);
 
 function spreadsheetId() {
   if (process.env.SPREADSHEET_ID) return process.env.SPREADSHEET_ID;
-  const toml = path.join(ROOT, 'worker', 'wrangler.toml');
+  const toml = path.join(ROOT, 'api', 'wrangler.toml');
   if (fs.existsSync(toml)) {
     const m = fs.readFileSync(toml, 'utf8').match(/^\s*SPREADSHEET_ID\s*=\s*"([^"]+)"/m);
     if (m) return m[1];
   }
-  die('SPREADSHEET_ID not set and not found in worker/wrangler.toml');
+  die('SPREADSHEET_ID not set and not found in api/wrangler.toml');
 }
 
 const SPREADSHEET_ID = spreadsheetId();

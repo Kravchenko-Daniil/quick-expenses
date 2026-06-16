@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Post-migration verification. Re-implements the Worker's read logic (must match
+// Post-migration verification. Re-implements the API's read logic (must match
 // api/src/index.js) and runs it against the live sheet, then checks integrity:
 //   - Balances header scans, accounts parse, dataStartRow is right
 //   - every Events row parses; every from/to references a real account

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Schema migration v2 — reshapes the live spreadsheet to the human-friendly layout
-// the Worker (src/index.js) now expects. Run backup-sheets.mjs first.
+// the API (src/index.js) now expects. Run backup-sheets.mjs first.
 //
 //   Accounts:  card_t→tbank_debit, card_vtb→vtb_debit; + new credit accounts.
 //              English names (only the Events Note column stays Russian).
@@ -8,7 +8,7 @@
 //              Note | id | at | client_id  (When is a derived display date; id/at/
 //              client_id are hidden). from/to ids remapped to the new account ids.
 //   Balances:  "Updated" line up top, accounts table below (header scanned by the
-//              Worker), Totals block below that. Raw updated_at ISO stays at F1.
+//              API), Totals block below that. Raw updated_at ISO stays at F1.
 //
 // Styling is applied separately by format-sheets.mjs. This script only moves data.
 // DRY_RUN=1 prints the plan without writing.

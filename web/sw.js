@@ -18,7 +18,7 @@ self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
   if (url.origin !== self.location.origin) return;
-  // /api/* — same-origin Worker, не кэшируем (динамика, balances/day должны быть свежими)
+  // /api/* — same-origin API, не кэшируем (динамика, balances/day должны быть свежими)
   if (url.pathname.startsWith('/api/')) return;
   e.respondWith(
     fetch(e.request)

@@ -1,5 +1,5 @@
 // Single source of the display timezone for the whole site. The zone itself lives
-// server-side (KV behind the Worker, GET/PUT /api/config); this module reads it,
+// server-side (KV behind the API, GET/PUT /api/config); this module reads it,
 // caches it locally, and derives every "today" / day-of / backdate from it. Change
 // it in the settings dropdown → PUT /api/config → every device picks it up on next
 // load. No build step: this attaches one global, AppConfig, loaded before each
@@ -11,7 +11,7 @@ window.AppConfig = (function () {
   const DEFAULT_TZ = 'Asia/Bangkok';
 
   // Zones offered in the settings dropdown — Daniil's plausible bases first. Any
-  // valid IANA zone the Worker accepts works; this list is just the convenient set.
+  // valid IANA zone the API accepts works; this list is just the convenient set.
   const ZONES = [
     'Asia/Bangkok',
     'Asia/Ho_Chi_Minh',
@@ -56,7 +56,7 @@ window.AppConfig = (function () {
   function today(zone) { return dateOf(null, zone); }
 
   // UTC ISO instant whose local time in `zone` is exactly 12:00:00 on YYYY-MM-DD.
-  // The Worker treats noon-exact as a date-only backdate placeholder. Computed from
+  // The API treats noon-exact as a date-only backdate placeholder. Computed from
   // the zone's actual offset for that date (works for any zone incl. DST), so there
   // is no hardcoded "+07:00" — change the zone and backdates still land right.
   function zonedNoonISO(dateStr, zone) {

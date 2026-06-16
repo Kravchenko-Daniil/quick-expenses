@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Cosmetic formatting for the finance spreadsheet (tabs: Events + Balances).
 //
-// Presentation only — it never writes cell VALUES (those are owned by the Worker
+// Presentation only — it never writes cell VALUES (those are owned by the API
 // and the migration). It sets fonts, colors, borders, alignment, number formats,
 // frozen/hidden columns and conditional formatting, locating data by scanning.
 //
@@ -31,7 +31,7 @@ const GRID = { red: 0.75, green: 0.75, blue: 0.75 };
 const TIFFANY = { red: 0.039, green: 0.729, blue: 0.710 };       // #0abab5 — app accent, marks the primary account
 const TIFFANY_BG = { red: 0.82, green: 0.95, blue: 0.94 };       // light tint behind the SETTINGS value cells
 const NUMFMT = { type: 'NUMBER', pattern: '#,##0.00' }; // ru_RU: optional-decimal patterns dangle a separator
-// Per-currency number format: amount stays a number (Worker reads it unchanged),
+// Per-currency number format: amount stays a number (API reads it unchanged),
 // the symbol is a display suffix. ₮ = Tether (USDT). Edit symbols here.
 const CURSYM = { RUB: '₽', THB: '฿', USDT: '₮', VND: '₫' };
 // Currencies with no minor unit — display without decimals (e.g. Vietnamese dong).
@@ -184,7 +184,7 @@ function boldCell(sheetId, r, c) {
   reqs.push(cond('=$B2="expense"', RED));
 
   // ---- Balances ----
-  // Column A holds the account `id` (Worker's scan key) but is hidden — only
+  // Column A holds the account `id` (API's scan key) but is hidden — only
   // Name/Amount/Currency are shown. The "Updated" and "Totals" side-labels were
   // moved one column right (into B/C) so they stay visible.
   reqs.push(freeze(balId, 0));

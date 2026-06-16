@@ -1,21 +1,21 @@
 # quick-expenses
 
-Hot-capture personal expense tracker. PWA on the home screen → Cloudflare Worker → a **Google Sheets** spreadsheet you own. The point is to log one expense («coffee 350») in ≤5–10 seconds at the moment of purchase — and because the store is a plain spreadsheet, you can look at and edit your data directly from anywhere (phone, desktop), no special tooling.
+Hot-capture personal expense tracker. web app on the home screen → the API → a **Google Sheets** spreadsheet you own. The point is to log one expense («coffee 350») in ≤5–10 seconds at the moment of purchase — and because the store is a plain spreadsheet, you can look at and edit your data directly from anywhere (phone, desktop), no special tooling.
 
-This repository contains the **code** (Worker, PWA, migration script). The **data** lives in your own Google spreadsheet.
+This repository contains the **code** (API, web app, migration script). The **data** lives in your own Google spreadsheet.
 
 ---
 
 ## Architecture
 
 ```
-[Browser / PWA] ──HTTPS──> [Cloudflare]
+[Browser / web app] ──HTTPS──> [Cloudflare]
                               │
    ┌──────────────────────────┴───────────────────────────┐
    │ <your-domain>  (single domain)                       │
    ├──────────────────────────────────────────────────────┤
-   │ /                       → Cloudflare Pages (PWA)     │
-   │ /api/*                  → Cloudflare Worker          │
+   │ /                       → Cloudflare Pages (web app) │
+   │ /api/*                  → the API                    │
    │                            └─ Google Sheets API ─────┼──> [your spreadsheet]
    └──────────────────────────────────────────────────────┘     ├── Events   (append-only log)
                                                                  └── Balances (per-account balances)
@@ -23,7 +23,7 @@ This repository contains the **code** (Worker, PWA, migration script). The **dat
                                                           you read / edit it by hand
 ```
 
-Same-origin: the PWA fetches relative paths `/api/...` — no CORS, and the user's PWA settings only need a Bearer token, never a "Worker URL". The Worker authenticates to Google with a **service-account JWT** (RS256, signed in-Worker via WebCrypto) exchanged for an OAuth access token.
+Same-origin: the web app fetches relative paths `/api/...` — no CORS, and the user's web app settings only need a Bearer token, never an "API URL". The API authenticates to Google with a **service-account JWT** (RS256, signed inside the API via WebCrypto) exchanged for an OAuth access token.
 
 ---
 
@@ -31,8 +31,8 @@ Same-origin: the PWA fetches relative paths `/api/...` — no CORS, and the user
 
 | Folder | What |
 |---|---|
-| `api/` | Cloudflare Worker (single-file vanilla JS). Endpoints `POST /api/expense`, `GET /api/balances`, `GET /api/day`, `POST /api/event`, `DELETE /api/event/last`. Talks to Google Sheets. |
-| `web/` | PWA: vanilla HTML/CSS/JS + Service Worker. Four pages: record expense, view balances, structured events, daily log. No build step. |
+| `api/` | The API — single-file vanilla JS on Cloudflare Workers. Endpoints `POST /api/expense`, `GET /api/balances`, `GET /api/day`, `POST /api/event`, `DELETE /api/event/last`. Talks to Google Sheets. |
+| `web/` | The web app: vanilla HTML/CSS/JS + Service Worker. Four pages: record expense, view balances, structured events, daily log. No build step. |
 | `scripts/` | `migrate-to-sheets.mjs` — one-off importer from the older JSON/markdown storage into the spreadsheet. Dependency-free Node. |
 | `docs/` | Changelog + the full setup guide (`deploy.md`). |
 
@@ -42,18 +42,18 @@ Same-origin: the PWA fetches relative paths `/api/...` — no CORS, and the user
 
 Two tabs:
 
-- **`Balances`** — current balance per account. Row 1 headers: `id | name | amount | currency`; cell `E1` is the label "updated_at" and `F1` holds the ISO timestamp. The Worker mutates only the `amount` column and `F1`.
+- **`Balances`** — current balance per account. Row 1 headers: `id | name | amount | currency`; cell `E1` is the label "updated_at" and `F1` holds the ISO timestamp. The API mutates only the `amount` column and `F1`.
 - **`Events`** — append-only event log. Row 1 headers: `id | type | from | to | amount | amount_to | note | at | client_id`. Types: `income | expense | transfer | exchange`.
 
-Google Sheets has no cross-tab transaction, so the two writes (append event, update balances) are sequential rather than atomic. For a single user the race window is negligible, and balances can always be recomputed from the log. You may hand-edit either tab at any time — the Worker doesn't assume it's the only writer.
+Google Sheets has no cross-tab transaction, so the two writes (append event, update balances) are sequential rather than atomic. For a single user the race window is negligible, and balances can always be recomputed from the log. You may hand-edit either tab at any time — the API doesn't assume it's the only writer.
 
-`POST` writes are idempotent on an optional `client_id` (the PWA's offline queue may resend) — a repeated id returns the already-committed event instead of double-writing.
+`POST` writes are idempotent on an optional `client_id` (the web app's offline queue may resend) — a repeated id returns the already-committed event instead of double-writing.
 
 ---
 
 ## Quick-expense parser
 
-The main PWA screen takes free text like:
+The main web app screen takes free text like:
 
 - `coffee 350` → expense 350 in default currency (THB) from default cash account.
 - `subscription 26 usdt` → routes to your USDT account, expense 26.
@@ -79,10 +79,10 @@ See **[docs/deploy.md](./docs/deploy.md)**. ~30–45 minutes:
 
 1. A Google Cloud **service account** + its JSON key, with the Sheets API enabled
 2. Create a spreadsheet with two tabs (`Events`, `Balances`) and **share it with the service-account email** (Editor)
-3. Random `FINANCE_WORKER_API_TOKEN` for Bearer auth
+3. Random `APP_TOKEN` for Bearer auth
 4. `cp api/wrangler.example.toml api/wrangler.toml`, fill in your domain / spreadsheet id / account ids
-5. `wrangler secret put GOOGLE_SA_JSON` and `FINANCE_WORKER_API_TOKEN`, then `npx wrangler deploy` for the Worker
-6. `npx wrangler pages deploy web --project-name=...` for the PWA, attach the same custom domain
+5. `wrangler secret put GOOGLE_SA_JSON` and `APP_TOKEN`, then `npx wrangler deploy` for the API
+6. `npx wrangler pages deploy web --project-name=...` for the web app, attach the same custom domain
 7. Open `https://<your-domain>/`, paste the Bearer token in Settings, done
 
 ---

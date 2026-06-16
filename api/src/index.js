@@ -5,7 +5,7 @@
 // Config comes through env (see wrangler.toml):
 //   SPREADSHEET_ID        — the target spreadsheet id
 //   GOOGLE_SA_JSON        — full service-account JSON (secret)
-//   FINANCE_WORKER_API_TOKEN — bearer token the PWA sends (secret)
+//   APP_TOKEN — bearer token the web app sends (secret)
 //   DEFAULT_ACCOUNT_*     — account id quick-expense routes to per currency
 //
 // No personal values live in code — this is a public template.
@@ -27,7 +27,7 @@
 //
 // Both sheets are read/written with valueInputOption=RAW (no locale parsing) and
 // valueRenderOption=UNFORMATTED_VALUE (numbers come back as numbers, the ISO `at`
-// stays a plain string). The user may hand-edit either sheet — the Worker never
+// stays a plain string). The user may hand-edit either sheet — the API never
 // assumes it is the only writer beyond the per-request read→mutate→write window.
 
 const WEEKDAYS_RU = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
@@ -38,7 +38,7 @@ const JSON_HEADERS = { 'Content-Type': 'application/json' };
 const EVENTS_SHEET = 'Events';
 const BALANCES_SHEET = 'Balances';
 const SETTINGS_SHEET = 'Settings';
-// Column order the Worker reads/writes for the Events sheet. `when` is a
+// Column order the API reads/writes for the Events sheet. `when` is a
 // display-only derived column (see formatWhen); every other key maps 1:1 to the
 // event object.
 const EVENT_COLS = ['when', 'type', 'from', 'to', 'amount', 'amount_to', 'note', 'id', 'at', 'client_id'];
@@ -46,7 +46,7 @@ const EVENT_COLS = ['when', 'type', 'from', 'to', 'amount', 'amount_to', 'note',
 export default {
   async fetch(req, env) {
     const auth = req.headers.get('Authorization') || '';
-    if (!env.FINANCE_WORKER_API_TOKEN || auth !== `Bearer ${env.FINANCE_WORKER_API_TOKEN}`) {
+    if (!env.APP_TOKEN || auth !== `Bearer ${env.APP_TOKEN}`) {
       return error(401, 'unauthorized');
     }
 
@@ -242,7 +242,7 @@ async function getBalances(env) {
   ]);
   // `primary` / `primary_currency` let the site surface the everyday account first
   // (highlighted on the balances screen). `timezone` is the active display zone, so
-  // read screens compute "today"/day-of from the same source the Worker uses.
+  // read screens compute "today"/day-of from the same source the API uses.
   return json({
     updated_at: updatedAt,
     accounts,
@@ -322,7 +322,7 @@ async function getEvents(req, env) {
   return json({ count: list.length, events: list });
 }
 
-// === QUICK EXPENSE (POST /api/expense) — main screen of PWA ===
+// === QUICK EXPENSE (POST /api/expense) — main screen of web app ===
 
 async function handleQuickExpense(req, env) {
   let body;

@@ -1,4 +1,4 @@
-// Unit smoke-tests for the Worker's pure logic (no fetch / no Sheets calls).
+// Unit smoke-tests for the API's pure logic (no fetch / no Sheets calls).
 // These are inline copies of the pure functions in src/index.js — keep them in
 // sync when the source changes. Run: node test-smoke.mjs
 

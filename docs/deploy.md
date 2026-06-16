@@ -9,23 +9,23 @@ Step-by-step guide to spin up this project on a fresh Cloudflare account with a 
 ## Architecture
 
 ```
-[Browser / PWA] ──HTTPS──> [Cloudflare]
+[Browser / web app] ──HTTPS──> [Cloudflare]
                               │
    ┌──────────────────────────┴────────────────────────────┐
    │ <your-domain>  (single domain)                        │
    ├───────────────────────────────────────────────────────┤
    │ /, /balances, /events, /expenses, /icon.svg, ...      │
-   │   → Cloudflare Pages (PWA static assets from web/)    │
+   │   → Cloudflare Pages (web app static assets from web/)│
    │                                                       │
    │ /api/*                                                │
-   │   → Cloudflare Worker (api/src/index.js)              │
+   │   → the API (api/src/index.js)                        │
    │     └─ Google Sheets API → your spreadsheet           │
    │          ├── Events   (append-only log)               │
    │          └── Balances (per-account balances)          │
    └───────────────────────────────────────────────────────┘
 ```
 
-PWA and Worker share a single domain (same-origin). The PWA fetches relative paths `/api/...` — no CORS, no «Worker URL» field in settings; only a Bearer token. The Worker authenticates to Google with a service-account JWT (RS256, signed via WebCrypto) exchanged for an OAuth access token, cached per-isolate.
+The web app and API share a single domain (same-origin). The web app fetches relative paths `/api/...` — no CORS, no «API URL» field in settings; only a Bearer token. The API authenticates to Google with a service-account JWT (RS256, signed via WebCrypto) exchanged for an OAuth access token, cached per-isolate.
 
 ---
 
@@ -48,23 +48,23 @@ PWA and Worker share a single domain (same-origin). The PWA fetches relative pat
 6. **Share** the spreadsheet with the service-account email as **Editor**. (Without this the API returns 403.)
 7. Grab the spreadsheet id from its URL: `docs.google.com/spreadsheets/d/`**`<THIS>`**`/edit`.
 
-> The Worker writes headers/rows on first use, but it's simplest to seed the tabs with the migration script (Step 3b) or by hand:
+> The API writes headers/rows on first use, but it's simplest to seed the tabs with the migration script (Step 3b) or by hand:
 > - `Balances` row 1: `id | name | amount | currency`; cell `E1` = `Обновлено` (label), `F1` = an ISO timestamp; then one row per account.
 > - `Events` row 1: `id | type | from | to | amount | amount_to | note | at | client_id`.
 
 ---
 
-## Step 2. FINANCE_WORKER_API_TOKEN (Bearer for PWA → Worker)
+## Step 2. APP_TOKEN (Bearer for web app → API)
 
 ```bash
 openssl rand -base64 32
 ```
 
-Save it — it goes into Worker secrets AND the PWA's localStorage.
+Save it — it goes into API secrets AND the web app's localStorage.
 
 ---
 
-## Step 3. Configure & deploy Worker
+## Step 3. Configure & deploy API
 
 ```bash
 cd api
@@ -82,7 +82,7 @@ Then:
 ```bash
 npx wrangler@latest login                       # auth Cloudflare
 npx wrangler@latest secret put GOOGLE_SA_JSON   # paste the FULL service-account JSON from Step 1
-npx wrangler@latest secret put FINANCE_WORKER_API_TOKEN        # paste token from Step 2
+npx wrangler@latest secret put APP_TOKEN        # paste token from Step 2
 npx wrangler@latest deploy
 ```
 
@@ -100,16 +100,16 @@ SOURCE_DIR=/path/to/old-data node scripts/migrate-to-sheets.mjs             # cl
 
 The script reads the service-account key from `api/google-service-account.json` (override with `SA_KEY=`) and the spreadsheet id from `api/wrangler.toml` (override with `SPREADSHEET_ID=`). It's re-runnable.
 
-### Smoke-test the Worker
+### Smoke-test the API
 
 ```bash
 DOMAIN="your-domain.example.com"
-TOKEN="<your FINANCE_WORKER_API_TOKEN>"
+TOKEN="<your APP_TOKEN>"
 
 # GET balances
 curl "https://$DOMAIN/api/balances" -H "Authorization: Bearer $TOKEN"
 
-# Quick-expense (main PWA screen)
+# Quick-expense (main web app screen)
 curl -X POST "https://$DOMAIN/api/expense" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
@@ -138,11 +138,11 @@ All `POST`s return `{ok:true, event:{...}, balances:{...}}`. The event is append
 
 ---
 
-## Step 4. Deploy PWA to Cloudflare Pages
+## Step 4. Deploy web app to Cloudflare Pages
 
 ```bash
 cd ..   # back to project root
-npx wrangler@latest pages deploy web --project-name=<your-pwa-project-name>
+npx wrangler@latest pages deploy web --project-name=<your-pages-project-name>
 ```
 
 **Important:** run from the project root, not from `web/`. Wrangler otherwise misses assets.
@@ -151,13 +151,13 @@ Wrangler prints a `<hash>.<project>.pages.dev` URL. Attach your custom domain to
 
 ---
 
-## Step 5. Open PWA & configure
+## Step 5. Open web app & configure
 
 Open `https://<your-domain>/` in a browser. On first load the **Settings** panel pops up with a single field:
 
-- **Bearer token** — paste the `FINANCE_WORKER_API_TOKEN` from Step 2 → Save.
+- **Bearer token** — paste the `APP_TOKEN` from Step 2 → Save.
 
-That's it — no "Worker URL" field, the PWA fetches `/api/...` on the same origin.
+That's it — no "API URL" field, the web app fetches `/api/...` on the same origin.
 
 ### Add to Home Screen (mobile)
 
@@ -177,31 +177,31 @@ That's it — no "Worker URL" field, the PWA fetches `/api/...` on the same orig
 - [ ] Spreadsheet shared with the service-account email as Editor
 - [ ] `curl` quick-expense with a plain number → new row in the `Events` tab
 - [ ] `curl` quick-expense with `usdt` token → routes to your USDT account, not THB default
-- [ ] PWA opens on `<your-domain>`, Settings has only a token field
-- [ ] Recording from PWA → row appears in the spreadsheet
+- [ ] web app opens on `<your-domain>`, Settings has only a token field
+- [ ] Recording from web app → row appears in the spreadsheet
 - [ ] Undo (`DELETE /api/event/last`) → last row removed, balance reverted
 
 ---
 
 ## Troubleshooting
 
-**Worker returns 401 Unauthorized.** `FINANCE_WORKER_API_TOKEN` in the Worker secret doesn't match what's in PWA `localStorage`. Re-paste in Settings, or `wrangler secret put FINANCE_WORKER_API_TOKEN`.
+**API returns 401 Unauthorized.** `APP_TOKEN` in the API secret doesn't match what's in web app `localStorage`. Re-paste in Settings, or `wrangler secret put APP_TOKEN`.
 
-**Worker returns 404 on `/api/...`.** The Workers Route isn't configured, or the Worker isn't deployed to the right zone. Cloudflare Dashboard → Workers → your Worker → Settings → Domains & Routes — should show `Route: <your-domain>/api/*`. If absent, `cd api && wrangler deploy`.
+**API returns 404 on `/api/...`.** The Workers Route isn't configured, or the API isn't deployed to the right zone. Cloudflare Dashboard → Workers → your API → Settings → Domains & Routes — should show `Route: <your-domain>/api/*`. If absent, `cd api && wrangler deploy`.
 
 **Pages returns HTML on `/api/balances` instead of JSON.** The Workers Route isn't matching, or hit Pages first. Workers Routes have priority over Pages by design — verify the pattern is exactly `<your-domain>/api/*` (not `/api*` or `api.<your-domain>/*`), and the zone is correct.
 
-**Worker 502 `sheets: ... 403`.** The spreadsheet isn't shared with the service-account email, or the Sheets API isn't enabled on the project. Re-check Step 1.6 and 1.1.
+**API 502 `sheets: ... 403`.** The spreadsheet isn't shared with the service-account email, or the Sheets API isn't enabled on the project. Re-check Step 1.6 and 1.1.
 
-**Worker 502 `sheets: ... 400` / `Unable to parse range`.** Tab names don't match. They must be exactly `Events` and `Balances` (case-sensitive).
+**API 502 `sheets: ... 400` / `Unable to parse range`.** Tab names don't match. They must be exactly `Events` and `Balances` (case-sensitive).
 
-**Worker 502 `sheets: token exchange ...`.** `GOOGLE_SA_JSON` is malformed, truncated, or the key was revoked. Re-paste the full JSON: `wrangler secret put GOOGLE_SA_JSON`.
+**API 502 `sheets: token exchange ...`.** `GOOGLE_SA_JSON` is malformed, truncated, or the key was revoked. Re-paste the full JSON: `wrangler secret put GOOGLE_SA_JSON`.
 
-**PWA didn't update after deploy.** Service Worker is caching. Close-reopen PWA, or DevTools → Application → Clear storage. Cache version is the `CACHE` constant in `web/sw.js` — bump it on significant changes.
+**web app didn't update after deploy.** Service Worker is caching. Close-reopen web app, or DevTools → Application → Clear storage. Cache version is the `CACHE` constant in `web/sw.js` — bump it on significant changes.
 
-**PWA won't install on iPhone.** Safari needs HTTPS (Pages provides it) and a `manifest.json` (present). If "Add to Home Screen" doesn't appear — update Safari, open in actual Safari (not an in-app browser).
+**web app won't install on iPhone.** Safari needs HTTPS (Pages provides it) and a `manifest.json` (present). If "Add to Home Screen" doesn't appear — update Safari, open in actual Safari (not an in-app browser).
 
-**Worker compute exhausted.** Cloudflare Workers free tier is 100k requests/day. A typical use profile (a few dozen recordings/day) won't come close.
+**API compute exhausted.** Cloudflare Workers free tier is 100k requests/day. A typical use profile (a few dozen recordings/day) won't come close.
 
 ---
 
@@ -209,7 +209,7 @@ That's it — no "Worker URL" field, the PWA fetches `/api/...` on the same orig
 
 - **Auto FX.** Reconciliation done in the spreadsheet (or in a Claude session over exported data).
 - **Categories.** Free-text `note`; categorize later.
-- **In-PWA chat with Claude.** Requires a paid Anthropic API key — use Claude Code locally instead.
+- **In-web app chat with Claude.** Requires a paid Anthropic API key — use Claude Code locally instead.
 - **Multiple users.** Single Bearer token, single spreadsheet. If you need multi-user, that's a different project.
 
 ---

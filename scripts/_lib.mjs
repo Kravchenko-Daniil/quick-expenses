@@ -1,7 +1,7 @@
 // Shared helpers for the admin scripts (backup / migrate / format / verify).
 // Dependency-free: Node 18+ fetch + node:crypto for the service-account JWT.
 // These scripts talk to the Sheets API directly with the service-account key —
-// they are operator tools, separate from the Worker (which is the live writer).
+// they are operator tools, separate from the API (which is the live writer).
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';

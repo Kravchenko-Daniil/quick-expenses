@@ -1,9 +1,9 @@
-name = "my-finance-worker"
+name = "finance-api"
 main = "src/index.js"
 compatibility_date = "2026-04-28"
 
-# Маршрут Worker'а. Замени на свой домен.
-# Path-prefix `/api/*` чтобы PWA и Worker могли жить на одном домене (PWA на Pages, Worker перехватывает только /api/*).
+# Маршрут API. Замени на свой домен.
+# Path-prefix `/api/*` чтобы сайт и API могли жить на одном домене (сайт на Pages, API перехватывает только /api/*).
 # `workers_dev = false` отключает fallback на workers.dev — единственный путь через кастомный домен.
 workers_dev = false
 preview_urls = false
@@ -12,7 +12,7 @@ pattern = "your-domain.example.com/api/*"
 zone_name = "example.com"
 
 # KV namespace for mutable app config (display `timezone`). Single source of truth,
-# read by the Worker and exposed via GET/PUT /api/config so the site can change it
+# read by the API and exposed via GET/PUT /api/config so the site can change it
 # from any device without a redeploy. Create once, then paste the printed id:
 #   npx wrangler@latest kv namespace create CONFIG
 [[kv_namespaces]]
@@ -43,5 +43,5 @@ DEFAULT_ACCOUNT_VND = "vnd-account-id"
 # Real secrets are NOT in this file — set via wrangler CLI:
 #   npx wrangler@latest secret put GOOGLE_SA_JSON
 #     (полный JSON сервисного аккаунта Google с доступом Editor к таблице)
-#   npx wrangler@latest secret put FINANCE_WORKER_API_TOKEN
-#     (long random string used by PWA as Bearer)
+#   npx wrangler@latest secret put APP_TOKEN
+#     (long random string used by the web app as Bearer)

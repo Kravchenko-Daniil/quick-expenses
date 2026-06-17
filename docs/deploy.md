@@ -21,7 +21,8 @@ Step-by-step guide to spin up this project on a fresh Cloudflare account with a 
    │   → the API (api/src/index.js)                        │
    │     └─ Google Sheets API → your spreadsheet           │
    │          ├── Events   (append-only log)               │
-   │          └── Balances (per-account balances)          │
+   │          ├── Balances (per-account balances)          │
+   │          └── Settings (primary account / currency)    │
    └───────────────────────────────────────────────────────┘
 ```
 
@@ -44,13 +45,14 @@ The web app and API share a single domain (same-origin). The web app fetches rel
 2. **APIs & Services → Credentials → Create credentials → Service account.** Name it anything (`<project>-sheets`). No roles needed.
 3. Open the service account → **Keys → Add key → Create new key → JSON.** A `*.json` file downloads — this is your `GOOGLE_SA_JSON`. Keep it private (it's a credential).
 4. Note the service account's **email** (looks like `name@project-id.iam.gserviceaccount.com`) — it's the `client_email` field inside the JSON.
-5. Create a **Google spreadsheet** with two tabs named exactly **`Events`** and **`Balances`**.
+5. Create a **Google spreadsheet** with three tabs named exactly **`Events`**, **`Balances`** and **`Settings`**.
 6. **Share** the spreadsheet with the service-account email as **Editor**. (Without this the API returns 403.)
 7. Grab the spreadsheet id from its URL: `docs.google.com/spreadsheets/d/`**`<THIS>`**`/edit`.
 
-> The API writes headers/rows on first use, but it's simplest to seed the tabs with the migration script (Step 3b) or by hand:
-> - `Balances` row 1: `id | name | amount | currency`; cell `E1` = `Обновлено` (label), `F1` = an ISO timestamp; then one row per account.
-> - `Events` row 1: `id | type | from | to | amount | amount_to | note | at | client_id`.
+> Seed the tabs by hand (or with the operator scripts in `scripts/`):
+> - `Events` — header row `when | type | from | to | amount | amount_to | note | at | client_id` (the API keys off the column order; `id`/`at`/`client_id` are kept hidden).
+> - `Balances` — an accounts table whose header row has `id` in column A (the API finds it by scanning for that header); columns `id | name | amount | currency`, one row per account, with an `Updated` line above and an optional `Totals` block below.
+> - `Settings` — two rows mapping `primary_account` and `primary_currency` (column A = key, column C = value: an account id and a currency). The `PRIMARY_ACCOUNT` / `PRIMARY_CURRENCY` env vars are the fallback if this tab is absent.
 
 ---
 
@@ -75,7 +77,14 @@ Edit `wrangler.toml`:
 - `[[routes]].pattern` → `<your-domain>/api/*`
 - `[[routes]].zone_name` → root zone (e.g. `example.com` for `app.example.com/api/*`)
 - `[vars].SPREADSHEET_ID` → your spreadsheet id from Step 1
-- `[vars].DEFAULT_ACCOUNT_USDT` / `_RUB` / `_THB` → the `id` values of your accounts in the `Balances` tab
+- `[vars].PRIMARY_ACCOUNT` / `PRIMARY_CURRENCY` → fallback primary account/currency (the `Settings` tab overrides these at runtime)
+- `[vars].DEFAULT_ACCOUNT_USDT` / `_RUB` / `_THB` / `_VND` → the `id` values of your accounts in the `Balances` tab
+
+Create a KV namespace for runtime config — the display timezone lives there so it's changeable from the web app without a redeploy — and copy the printed `id` into the `CONFIG` KV binding in `wrangler.toml`:
+
+```bash
+npx wrangler@latest kv namespace create CONFIG
+```
 
 Then:
 
@@ -121,7 +130,7 @@ curl -X POST "https://$DOMAIN/api/expense" \
   -H "Content-Type: application/json" \
   -d '{"text":"test 5 usdt"}'
 
-# GET day (expenses for a specific day in Bangkok TZ)
+# GET day (expenses for a specific day in the active TZ)
 curl "https://$DOMAIN/api/day?date=2026-05-08" -H "Authorization: Bearer $TOKEN"
 
 # POST event (structured: income/expense/transfer/exchange)
@@ -129,6 +138,9 @@ curl -X POST "https://$DOMAIN/api/event" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"type":"income","to":"<account-id>","amount":1000,"note":"salary"}'
+
+# GET config (display timezone, stored in KV)
+curl "https://$DOMAIN/api/config" -H "Authorization: Bearer $TOKEN"
 
 # DELETE last event (undo)
 curl -X DELETE "https://$DOMAIN/api/event/last" -H "Authorization: Bearer $TOKEN"
@@ -193,7 +205,7 @@ That's it — no "API URL" field, the web app fetches `/api/...` on the same ori
 
 **API 502 `sheets: ... 403`.** The spreadsheet isn't shared with the service-account email, or the Sheets API isn't enabled on the project. Re-check Step 1.6 and 1.1.
 
-**API 502 `sheets: ... 400` / `Unable to parse range`.** Tab names don't match. They must be exactly `Events` and `Balances` (case-sensitive).
+**API 502 `sheets: ... 400` / `Unable to parse range`.** Tab names don't match. They must be exactly `Events`, `Balances` and `Settings` (case-sensitive).
 
 **API 502 `sheets: token exchange ...`.** `GOOGLE_SA_JSON` is malformed, truncated, or the key was revoked. Re-paste the full JSON: `wrangler secret put GOOGLE_SA_JSON`.
 

@@ -18,7 +18,8 @@ This repository contains the **code** (API, web app, migration script). The **da
    │ /api/*                  → the API                    │
    │                            └─ Google Sheets API ─────┼──> [your spreadsheet]
    └──────────────────────────────────────────────────────┘     ├── Events   (append-only log)
-                                                                 └── Balances (per-account balances)
+                                                                 ├── Balances (per-account balances)
+                                                                 └── Settings (primary account / currency)
                                                                         ▲
                                                           you read / edit it by hand
 ```
@@ -31,19 +32,20 @@ Same-origin: the web app fetches relative paths `/api/...` — no CORS, and the 
 
 | Folder | What |
 |---|---|
-| `api/` | The API — single-file vanilla JS on Cloudflare Workers. Endpoints `POST /api/expense`, `GET /api/balances`, `GET /api/day`, `POST /api/event`, `DELETE /api/event/last`. Talks to Google Sheets. |
+| `api/` | The API — single-file vanilla JS on Cloudflare Workers. Endpoints: `POST /api/expense` (quick capture), `GET /api/balances`, `GET /api/day`, `GET /api/events`, `POST /api/event`, `PATCH`/`DELETE /api/event/:id`, `DELETE /api/event/last` (undo), `POST /api/snapshot` (mirror balances from an external source), `GET`/`PUT /api/config` (display timezone, stored in Cloudflare KV). Talks to Google Sheets. |
 | `web/` | The web app: vanilla HTML/CSS/JS + Service Worker. Four pages: record expense, view balances, structured events, daily log. No build step. |
-| `scripts/` | `migrate-to-sheets.mjs` — one-off importer from the older JSON/markdown storage into the spreadsheet. Dependency-free Node. |
+| `scripts/` | `migrate-to-sheets.mjs` (one-off importer from the older JSON/markdown storage) plus operator scripts (backup, schema migrations, format, verify) sharing `_lib.mjs`. Dependency-free Node. |
 | `docs/` | Changelog + the full setup guide (`deploy.md`). |
 
 ---
 
 ## Data layout (in your spreadsheet)
 
-Two tabs:
+Three tabs:
 
-- **`Balances`** — current balance per account. Row 1 headers: `id | name | amount | currency`; cell `E1` is the label "updated_at" and `F1` holds the ISO timestamp. The API mutates only the `amount` column and `F1`.
-- **`Events`** — append-only event log. Row 1 headers: `id | type | from | to | amount | amount_to | note | at | client_id`. Types: `income | expense | transfer | exchange`.
+- **`Events`** — append-only event log. Columns: `when | type | from | to | amount | amount_to | note | at | client_id` (the `id`, `at` and `client_id` columns are hidden; `when` is a derived human-readable date). Types: `income | expense | transfer | exchange`.
+- **`Balances`** — current balance per account. The accounts table is located by scanning column A for an `id` header (the `id` column is hidden — it's the key that `from`/`to` reference); the visible columns are name / amount / currency. An "Updated" line sits on top and a `Totals` block (one `SUMIF` per currency) below. The API mutates only the `amount` column and the timestamp cell.
+- **`Settings`** — the primary (everyday) account and currency, used for a quick-expense typed without a currency token. The API reads it at runtime; the `PRIMARY_ACCOUNT` / `PRIMARY_CURRENCY` env vars are the fallback.
 
 Google Sheets has no cross-tab transaction, so the two writes (append event, update balances) are sequential rather than atomic. For a single user the race window is negligible, and balances can always be recomputed from the log. You may hand-edit either tab at any time — the API doesn't assume it's the only writer.
 
@@ -59,7 +61,7 @@ The main web app screen takes free text like:
 - `subscription 26 usdt` → routes to your USDT account, expense 26.
 - `подписка 500 руб` → routes to your RUB account.
 
-Rules: the last contiguous number is the amount; everything else is the note. Currency tokens (`usdt | rub | руб`, case-insensitive) get stripped from the note and route to the corresponding `DEFAULT_ACCOUNT_*` configured in `wrangler.toml`. Two or more tokens → ambiguous, falls back to default. Unicode-aware word boundaries so words like «рубероид» don't false-match `руб`.
+Rules: the last contiguous number is the amount; everything else is the note. Currency tokens (`usdt | rub | руб | thb | бат | baht | vnd | донг`, case-insensitive) get stripped from the note and route to the corresponding `DEFAULT_ACCOUNT_*` configured in `wrangler.toml`. Exactly one token → that currency's account; zero or two-plus tokens → the primary account. Unicode-aware word boundaries so words like «рубероид» don't false-match `руб`.
 
 The parser is intentionally dumb — no categories, no FX, no autocomplete. Designed for ≤5-second capture, not for analysis.
 
@@ -78,7 +80,7 @@ Reconciliation, categorization, currency conversion, charting — all of that is
 See **[docs/deploy.md](./docs/deploy.md)**. ~30–45 minutes:
 
 1. A Google Cloud **service account** + its JSON key, with the Sheets API enabled
-2. Create a spreadsheet with two tabs (`Events`, `Balances`) and **share it with the service-account email** (Editor)
+2. Create a spreadsheet with three tabs (`Events`, `Balances`, `Settings`) and **share it with the service-account email** (Editor)
 3. Random `APP_TOKEN` for Bearer auth
 4. `cp api/wrangler.example.toml api/wrangler.toml`, fill in your domain / spreadsheet id / account ids
 5. `wrangler secret put GOOGLE_SA_JSON` and `APP_TOKEN`, then `npx wrangler deploy` for the API
